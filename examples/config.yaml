@@ -1,0 +1,66 @@
+# SRT2Voice 配置示例
+# 复制此文件到 ~/.srt2voice/config.yaml 并修改配置
+
+api:
+  # OpenAI API密钥（必需）
+  openai_key: "sk-your-api-key-here"
+
+voice:
+  # 默认语音类型 (alloy/echo/fable/onyx/nova/shimmer)
+  default: "alloy"
+  
+  # 语速 (0.25-4.0，1.0为正常速度)
+  speed: 1.0
+  
+  # TTS模型 (tts-1 或 tts-1-hd)
+  # tts-1: 更快更便宜 ($0.015/1000字符)
+  # tts-1-hd: 更高质量 ($0.030/1000字符)
+  model: "tts-1-hd"
+
+output:
+  # 输出格式 (mp3/wav)
+  format: "mp3"
+  
+  # 音频比特率
+  bitrate: "128k"
+  
+  # 默认输出目录
+  directory: "./"
+
+processing:
+  # 最大重试次数
+  max_retries: 3
+  
+  # 请求超时时间（秒）
+  timeout: 30
+  
+  # 并发处理数（批量模式）
+  concurrent: 3
+  
+  # 文本处理规则
+  text_rules:
+    # 是否标准化标点符号
+    normalize_punctuation: true
+    
+    # 是否转换数字为中文
+    convert_numbers: false
+    
+    # 自定义替换规则（可选）
+    # replacements:
+    #   - pattern: "regex pattern"
+    #     replacement: "replacement text"
+  
+  # 专业术语保护（可选）
+  # 这些词汇将保持原样发音，不会被文本处理规则影响
+  # preserve_terms:
+  #   - "Masters"
+  #   - "birdie"
+  #   - "专业术语"
+
+# 场景预设（可选）
+# 可以定义自定义预设
+# custom_presets:
+#   my_style:
+#     voice: "echo"
+#     speed: 1.1
+#     sentence_pause: 0.6
