@@ -1,0 +1,56 @@
+# Default configuration for srt2speech
+# Copy this file to config/local.yaml for your custom settings
+
+services:
+  google:
+    service_name: google
+    priority: 1
+    enabled: true
+    credentials:
+      # Set GOOGLE_APPLICATION_CREDENTIALS environment variable
+      # or specify the key file path here
+      key_file: ""
+    voice_settings:
+      language: zh-CN
+      gender: FEMALE
+      name: zh-CN-Standard-A
+      speaking_rate: 1.0
+      pitch: 0.0
+      volume_gain_db: 0.0
+
+  azure:
+    service_name: azure
+    priority: 2
+    enabled: false
+    credentials:
+      # Set AZURE_SPEECH_KEY and AZURE_SPEECH_REGION environment variables
+      # or specify them here
+      subscription_key: ""
+      region: "eastus"
+    voice_settings:
+      language: zh-CN
+      gender: Female
+      name: zh-CN-XiaoxiaoNeural
+      speaking_rate: 1.0
+      pitch: 0.0
+      volume_gain_db: 0.0
+
+output:
+  format: wav
+  sample_rate: 44100
+  channels: 1
+
+audio_processing:
+  normalize: true
+  remove_silence: false
+  crossfade_duration: 0.01  # seconds
+
+cache:
+  enabled: true
+  directory: cache
+  max_size_mb: 1000
+
+logging:
+  level: INFO
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: null  # Set to a file path to enable file logging

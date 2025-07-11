@@ -74,11 +74,18 @@ Thumbs.db
 # Project specific
 *.mp3
 *.wav
-*.srt
-!tests/*.srt
-!examples/*.srt
-*.log
-.openai_key
+*.m4a
+output/
+cache/
+logs/
+*.srt.bak
+config/credentials.yaml
+config/local.yaml
+
+# TTS API credentials
+google_credentials.json
+azure_credentials.json
+.credentials/
 
 # Temporary files
 *.tmp
