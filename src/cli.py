@@ -7,6 +7,9 @@ from rich.table import Table
 from .config import ConfigManager
 from .parser.srt import SRTParser
 from .utils.logger import setup_logger
+from .tts import GoogleTTSService
+from .audio import AudioProcessor
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeRemainingColumn
 
 console = Console()
 
@@ -93,9 +96,8 @@ def main(input_file, output_file, config_path, service_name, preview, debug, lis
             entries = entries[:preview]
             console.print(f"\n[yellow]Preview mode:[/yellow] Processing first {len(entries)} subtitles")
         
-        # TODO: In next phase, implement TTS processing
-        console.print("\n[yellow]Note:[/yellow] TTS processing not yet implemented in Phase 1")
-        console.print("Currently only parsing and displaying SRT information.")
+        # Process with TTS
+        process_srt(entries, output_path, config_manager, service_name, logger)
         
         # Display sample entries
         if entries:
@@ -152,6 +154,88 @@ def list_available_services(config_manager: ConfigManager):
         )
     
     console.print(table)
+
+
+def process_srt(entries, output_path, config_manager, service_name, logger):
+    """Process SRT entries with TTS service."""
+    # Determine which service to use
+    if service_name:
+        if service_name not in config_manager.config.tts_services:
+            console.print(f"[red]Error:[/red] Unknown service '{service_name}'")
+            sys.exit(1)
+        tts_config = config_manager.config.tts_services[service_name]
+    else:
+        # Use the highest priority enabled service
+        services = config_manager.get_enabled_services()
+        if not services:
+            console.print("[red]Error:[/red] No TTS services enabled")
+            sys.exit(1)
+        service_name = list(services.keys())[0]
+        tts_config = services[service_name]
+    
+    console.print(f"\n[cyan]Using TTS service:[/cyan] {service_name}")
+    
+    # Initialize TTS service (currently only Google is implemented)
+    if service_name != 'google':
+        console.print(f"[red]Error:[/red] Service '{service_name}' not yet implemented")
+        sys.exit(1)
+    
+    # Convert config to dict for TTS service
+    tts_service_config = {
+        'api_key_path': tts_config.api_key_path,
+        'language_code': tts_config.voice_settings.language,
+        'voice_name': tts_config.voice_settings.name,
+        'speaking_rate': tts_config.voice_settings.speed,
+        'pitch': tts_config.voice_settings.pitch
+    }
+    
+    try:
+        tts_service = GoogleTTSService(tts_service_config)
+    except Exception as e:
+        console.print(f"[red]Error initializing TTS service:[/red] {str(e)}")
+        sys.exit(1)
+    
+    # Initialize audio processor
+    audio_processor = AudioProcessor(output_format=output_path.suffix[1:])
+    
+    # Process each subtitle with progress bar
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TimeRemainingColumn(),
+        console=console
+    ) as progress:
+        task = progress.add_task("Converting subtitles to speech...", total=len(entries))
+        
+        for i, entry in enumerate(entries):
+            try:
+                # Generate audio for this subtitle
+                audio = tts_service.text_to_speech(entry.content)
+                
+                # Add to processor
+                audio_processor.add_audio_segment(
+                    entry.start.total_seconds(),
+                    audio
+                )
+                
+                progress.update(task, advance=1, description=f"Processing: {entry.content[:30]}...")
+                
+            except Exception as e:
+                logger.error(f"Error processing subtitle {entry.index}: {str(e)}")
+                console.print(f"[red]Error:[/red] Failed to process subtitle {entry.index}")
+                continue
+    
+    # Generate and save final audio
+    console.print("\n[cyan]Generating final audio...[/cyan]")
+    try:
+        final_audio = audio_processor._concatenate_audio()
+        audio_processor.save_audio(final_audio, output_path)
+        console.print(f"\n[green]✓ Success![/green] Audio saved to: {output_path}")
+    except Exception as e:
+        console.print(f"[red]Error saving audio:[/red] {str(e)}")
+        sys.exit(1)
 
 
 if __name__ == '__main__':

@@ -3,7 +3,18 @@
     "allow": [
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(touch:*)"
+      "Bash(touch:*)",
+      "Bash(cd:*)",
+      "Bash(cd:*)",
+      "Bash(cd:*)",
+      "Bash(cd:*)",
+      "Bash(cd:*)",
+      "WebFetch(domain:blog.csdn.net)",
+      "WebFetch(domain:www.volcengine.com)",
+      "WebFetch(domain:github.com)",
+      "Bash(rm:*)",
+      "Bash(python tests/test_config_voice_profile.py)",
+      "Bash(python tests:*)"
     ],
     "deny": []
   }

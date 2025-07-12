@@ -1,14 +1,68 @@
-# Default configuration for srt2speech
-# Copy this file to config/local.yaml for your custom settings
+# SRT2Speech 默认配置文件
+# 复制此文件为 config/local.yaml 来自定义您的设置
 
 services:
+  # GPT-SoVITS 本地TTS服务（推荐）
+  gpt_sovits:
+    service_name: gpt_sovits
+    priority: 1  # 服务优先级（数字越小优先级越高）
+    enabled: true
+    
+    credentials:
+      api_url: "http://127.0.0.1:9880"  # GPT-SoVITS API地址
+      api_version: "v2"  # API版本：v1 或 v2（推荐v2）
+    
+    voice_settings:
+      # 基础设置（必需）
+      language: "zh"  # 语言：zh（中文）、en（英文）、ja（日文）、ko（韩文）、yue（粤语）
+      
+      # 参考音频配置 - 选择其中一种方式：
+      
+      # 方式1：使用预定义的音频配置（推荐）
+      voice_profile: "default"  # 引用 config/reference_voices/default.yaml
+      
+      # 方式2：直接指定音频参数（会覆盖voice_profile）
+      # ref_audio_path: "/path/to/your/reference.wav"
+      # prompt_text: "参考音频的准确文本内容"
+      # prompt_lang: "zh"
+      
+      # 提示：您可以在 config/reference_voices/ 目录下创建多个参考音频配置
+      # 然后通过修改 voice_profile 来切换不同的声音
+      
+      # 采样参数（可选，影响生成质量）
+      top_k: 5  # Top-K采样，范围1-20，越小越稳定
+      top_p: 1  # Top-P采样，范围0-1
+      temperature: 1  # 温度参数，范围0-2，越低越稳定
+      
+      # 生成控制（可选）
+      speed_factor: 1.0  # 语速，范围0.5-2.0
+      text_split_method: "cut5"  # 文本分割方法：cut0-cut5
+      batch_size: 1  # 批处理大小
+      batch_threshold: 0.75  # 批处理阈值
+      split_bucket: true  # 是否分桶处理
+      
+      # 音频设置（可选）
+      media_type: "wav"  # 输出格式：wav、ogg、aac
+      streaming_mode: false  # 是否流式返回
+      fragment_interval: 0.3  # 片段间隔（秒）
+      
+      # 高级参数（可选）
+      seed: -1  # 随机种子，-1表示随机
+      parallel_infer: true  # 并行推理
+      repetition_penalty: 1.35  # 重复惩罚
+      
+      # V3版本专用参数（可选）
+      sample_steps: 32  # 采样步数（仅V3版本）
+      super_sampling: false  # 超采样（仅V3版本）
+
+  # Google Cloud Text-to-Speech（备选）
   google:
     service_name: google
-    priority: 1
-    enabled: true
+    priority: 2
+    enabled: false  # 默认禁用，需要时启用
     credentials:
-      # Set GOOGLE_APPLICATION_CREDENTIALS environment variable
-      # or specify the key file path here
+      # 设置 GOOGLE_APPLICATION_CREDENTIALS 环境变量
+      # 或在此指定密钥文件路径
       key_file: ""
     voice_settings:
       language: zh-CN
@@ -18,13 +72,14 @@ services:
       pitch: 0.0
       volume_gain_db: 0.0
 
+  # Azure Speech Services（预留）
   azure:
     service_name: azure
-    priority: 2
+    priority: 3
     enabled: false
     credentials:
-      # Set AZURE_SPEECH_KEY and AZURE_SPEECH_REGION environment variables
-      # or specify them here
+      # 设置 AZURE_SPEECH_KEY 和 AZURE_SPEECH_REGION 环境变量
+      # 或在此指定
       subscription_key: ""
       region: "eastus"
     voice_settings:
@@ -35,22 +90,39 @@ services:
       pitch: 0.0
       volume_gain_db: 0.0
 
+# 输出设置
 output:
-  format: wav
-  sample_rate: 44100
+  format: 'wav'
+  sample_rate: 32000  # GPT-SoVITS默认输出32kHz
   channels: 1
 
+# 音频处理设置
 audio_processing:
   normalize: true
   remove_silence: false
-  crossfade_duration: 0.01  # seconds
+  crossfade_duration: 0.01
 
+# 缓存设置
 cache:
   enabled: true
-  directory: cache
+  directory: 'cache'
   max_size_mb: 1000
 
+# 日志设置
 logging:
-  level: INFO
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  file: null  # Set to a file path to enable file logging
+  level: 'INFO'
+  format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+  file: null
+
+# 使用说明：
+# 1. 启动GPT-SoVITS服务：
+#    cd /path/to/GPT-SoVITS
+#    python api_v2.py -a 127.0.0.1 -p 9880
+#
+# 2. 准备参考音频：
+#    - 建议使用3-10秒的清晰语音
+#    - 确保音频质量良好，无背景噪音
+#    - 文本要与音频内容完全匹配
+#
+# 3. 运行srt2speech：
+#    python -m src.cli input.srt output.wav -c config/default.yaml

@@ -10,11 +10,28 @@ load_dotenv()
 
 class VoiceSettings(BaseModel):
     language: str = Field(default="zh-CN", description="Language code")
-    gender: str = Field(default="FEMALE", description="Voice gender")
+    gender: Optional[str] = Field(default="FEMALE", description="Voice gender")
     name: Optional[str] = Field(default=None, description="Specific voice name")
     speaking_rate: float = Field(default=1.0, ge=0.25, le=4.0, description="Speaking rate")
     pitch: float = Field(default=0.0, ge=-20.0, le=20.0, description="Voice pitch")
     volume_gain_db: float = Field(default=0.0, ge=-96.0, le=16.0, description="Volume gain in dB")
+    
+    # GPT-SoVITS specific fields
+    ref_audio_path: Optional[str] = Field(default=None, description="Reference audio path")
+    prompt_text: Optional[str] = Field(default=None, description="Reference audio text")
+    prompt_lang: Optional[str] = Field(default=None, description="Reference audio language")
+    top_k: Optional[int] = Field(default=5, ge=1, le=20, description="Top-K sampling")
+    top_p: Optional[float] = Field(default=1.0, ge=0, le=1, description="Top-P sampling")
+    temperature: Optional[float] = Field(default=1.0, ge=0, le=2, description="Temperature")
+    speed_factor: Optional[float] = Field(default=1.0, ge=0.5, le=2.0, description="Speed factor")
+    text_split_method: Optional[str] = Field(default="cut5", description="Text split method")
+    batch_size: Optional[int] = Field(default=1, ge=1, description="Batch size")
+    media_type: Optional[str] = Field(default="wav", description="Media type")
+    streaming_mode: Optional[bool] = Field(default=False, description="Streaming mode")
+    
+    # Allow extra fields for flexibility
+    class Config:
+        extra = "allow"
 
 
 class ServiceConfig(BaseModel):
@@ -73,10 +90,43 @@ class ConfigManager:
         if self.config_path.exists():
             with open(self.config_path, 'r', encoding='utf-8') as f:
                 data = yaml.safe_load(f) or {}
+            
+            # 处理voice_profile引用
+            self._process_voice_profiles(data)
+            
             return Config(**data)
         else:
             # Return default config if file doesn't exist
             return Config()
+    
+    def _process_voice_profiles(self, data: dict) -> None:
+        """处理配置中的voice_profile引用"""
+        if 'services' not in data:
+            return
+        
+        for service_name, service_config in data['services'].items():
+            if not isinstance(service_config, dict):
+                continue
+                
+            voice_settings = service_config.get('voice_settings', {})
+            voice_profile = voice_settings.get('voice_profile')
+            
+            if voice_profile:
+                # 加载voice profile配置
+                profile_path = Path(f'config/reference_voices/{voice_profile}.yaml')
+                if profile_path.exists():
+                    with open(profile_path, 'r', encoding='utf-8') as f:
+                        profile_data = yaml.safe_load(f) or {}
+                    
+                    # 合并配置（profile配置优先）
+                    for key in ['ref_audio_path', 'prompt_text', 'prompt_lang']:
+                        if key in profile_data:
+                            voice_settings[key] = profile_data[key]
+                    
+                    # 删除voice_profile字段，避免传递给服务
+                    del voice_settings['voice_profile']
+                else:
+                    print(f"警告：找不到voice profile配置文件: {profile_path}")
     
     def save_config(self, path: Optional[str] = None):
         """Save current configuration to YAML file."""
