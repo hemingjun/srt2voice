@@ -15,10 +15,9 @@ console = Console()
 
 
 @click.command()
-@click.option('-i', '--input', 'input_file', type=click.Path(exists=True),
-              help='Input SRT file path')
+@click.argument('input_file', type=click.Path(exists=True), required=False)
 @click.option('-o', '--output', 'output_file',
-              help='Output audio file path')
+              help='Output audio file path (default: same as input with .wav extension)')
 @click.option('-c', '--config', 'config_path', 
               default='config/default.yaml',
               help='Configuration file path')
@@ -35,9 +34,9 @@ def main(input_file, output_file, config_path, service_name, preview, debug, lis
     """Convert SRT subtitle files to speech audio using TTS services.
     
     Example:
-        srt2speech -i input.srt -o output.wav
-        srt2speech -i input.srt -o output.wav --service gptsovits
-        srt2speech -i input.srt -o output.wav --preview 5
+        srt2speech input.srt
+        srt2speech input.srt --service gemini
+        srt2speech input.srt --preview 5
         srt2speech --list-services
     """
     try:
@@ -55,12 +54,16 @@ def main(input_file, output_file, config_path, service_name, preview, debug, lis
         
         # Validate required arguments for processing
         if not input_file:
-            console.print("[red]Error:[/red] Input file is required. Use -i/--input to specify the SRT file.")
+            console.print("[red]Error:[/red] Input SRT file is required.")
+            console.print("Usage: srt2speech <srt_file>")
             sys.exit(1)
         
+        # Generate output filename if not specified
+        input_path = Path(input_file)
         if not output_file:
-            console.print("[red]Error:[/red] Output file is required. Use -o/--output to specify the output audio file.")
-            sys.exit(1)
+            # Generate output filename in the same directory as input
+            output_file = str(input_path.with_suffix('.wav'))
+            console.print(f"[cyan]Output file:[/cyan] {output_file}")
         
         # Validate output file extension
         output_path = Path(output_file)

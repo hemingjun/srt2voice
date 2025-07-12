@@ -83,8 +83,6 @@ config/credentials.yaml
 config/local.yaml
 
 # TTS API credentials
-google_credentials.json
-azure_credentials.json
 .credentials/
 
 # Temporary files

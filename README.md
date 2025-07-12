@@ -37,21 +37,27 @@ pip install -e .
 ### 基本用法
 
 ```bash
-# 基本使用（默认使用配置中优先级最高的服务）
-srt2speech input.srt -o output.wav
+# 基本使用（自动在SRT文件同目录生成同名.wav文件）
+srt2speech input.srt
 
 # 指定TTS服务
-srt2speech input.srt -o output.wav --service google
-srt2speech input.srt -o output.wav --service gpt_sovits
+srt2speech input.srt --service gpt_sovits
+srt2speech input.srt --service gemini
+
+# 指定输出文件
+srt2speech input.srt -o /path/to/output.wav
 
 # 使用配置文件
-srt2speech input.srt -o output.wav --config config/custom.yaml
+srt2speech input.srt --config config/custom.yaml
 
 # 预览模式（只处理前5条字幕）
-srt2speech input.srt -o output.wav --preview 5
+srt2speech input.srt --preview 5
 
 # 调试模式
-srt2speech input.srt -o output.wav --debug
+srt2speech input.srt --debug
+
+# 列出可用的TTS服务
+srt2speech --list-services
 ```
 
 ### 使用GPT-SoVITS
@@ -76,7 +82,11 @@ srt2speech input.srt -o output.wav --debug
 
 4. **运行转换**
    ```bash
-   srt2speech input.srt -o output.wav --config config/my_config.yaml
+   # 自动输出到SRT文件同目录
+   srt2speech input.srt
+   
+   # 使用自定义配置
+   srt2speech input.srt --config config/my_config.yaml
    ```
 
 ## 配置
@@ -100,23 +110,12 @@ services:
       prompt_text: "参考音频文本"
       # 更多参数见 config/default.yaml
   
-  google:
-    service_name: google
-    priority: 2
-    enabled: true
-    credentials:
-      key_file: "path/to/google-credentials.json"
-    voice_settings:
-      language: "zh-CN"
-      gender: "FEMALE"
 ```
 
 ### 环境变量
 
 支持通过环境变量配置敏感信息：
-- `GOOGLE_APPLICATION_CREDENTIALS`: Google Cloud 认证文件路径
-- `AZURE_SPEECH_KEY`: Azure Speech 服务密钥
-- `AZURE_SPEECH_REGION`: Azure Speech 服务区域
+
 
 ## 测试
 

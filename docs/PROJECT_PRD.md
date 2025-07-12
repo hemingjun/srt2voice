@@ -45,6 +45,7 @@
 
 #### 2.2.1 多服务支持
 - GPT-SoVITS集成（本地部署）
+- Google Gemini TTS集成（云端API，支持24种语言）
 - 阿里云/讯飞TTS接口预留（后续扩展）  
 - 统一的服务抽象接口
 - 服务降级机制（自动切换备用服务）
@@ -98,6 +99,7 @@ srt2speech/
 │   │   ├── __init__.py
 │   │   ├── base.py         # TTS抽象基类 (<50行)
 │   │   ├── gptsovits.py    # GPT-SoVITS适配器 (<150行)
+│   │   ├── gemini.py       # Google Gemini TTS适配器 (<150行)
 │   │   └── aliyun.py       # 阿里云TTS适配器（预留） (<150行)
 │   ├── audio/
 │   │   ├── __init__.py

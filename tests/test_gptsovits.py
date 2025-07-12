@@ -48,7 +48,7 @@ def test_gptsovits_with_config():
         print(f"✓ 转换成功，音频长度：{len(audio)}ms")
         
         # 保存测试音频
-        output_path = Path("tests/output/config_test.wav")
+        output_path = Path("tests/test_srt/Kiawah Island_zh-cn.srt")
         output_path.parent.mkdir(exist_ok=True)
         audio.export(output_path, format="wav")
         print(f"✓ 音频已保存到：{output_path}")
