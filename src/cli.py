@@ -15,7 +15,7 @@ console = Console()
 
 
 @click.command()
-@click.argument('input_file', type=click.Path(exists=True), required=False)
+@click.argument('input_file', nargs=-1, required=False)
 @click.option('-o', '--output', 'output_file',
               help='Output audio file path (default: same as input with .wav extension)')
 @click.option('-c', '--config', 'config_path', 
@@ -52,11 +52,32 @@ def main(input_file, output_file, config_path, service_name, preview, debug, lis
             list_available_services(config_manager)
             return
         
-        # Validate required arguments for processing
+        # Process input file argument(s)
         if not input_file:
             console.print("[red]Error:[/red] Input SRT file is required.")
             console.print("Usage: srt2speech <srt_file>")
             sys.exit(1)
+        
+        # Handle multiple arguments (path with spaces)
+        if len(input_file) > 1:
+            # Try to join arguments with space
+            potential_path = ' '.join(input_file)
+            if Path(potential_path).exists():
+                input_file = potential_path
+                logger.debug(f"Joined multiple arguments into path: {input_file}")
+            else:
+                # If joined path doesn't exist, try the first argument only
+                if Path(input_file[0]).exists():
+                    input_file = input_file[0]
+                    if len(input_file) > 1:
+                        console.print(f"[yellow]Warning:[/yellow] Extra arguments ignored: {' '.join(input_file[1:])}")
+                else:
+                    console.print(f"[red]Error:[/red] File not found: {potential_path}")
+                    console.print("[yellow]Hint:[/yellow] If your path contains spaces, try using quotes: \"path with spaces/file.srt\"")
+                    sys.exit(1)
+        else:
+            # Single argument
+            input_file = input_file[0]
         
         # Generate output filename if not specified
         input_path = Path(input_file)
