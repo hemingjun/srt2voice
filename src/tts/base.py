@@ -44,3 +44,16 @@ class TTSService(ABC):
             List[AudioSegment]: 音频片段列表
         """
         return [self.text_to_speech(text) for text in texts]
+    
+    def check_health(self) -> bool:
+        """检查服务健康状态
+        
+        Returns:
+            bool: 服务是否可用
+        """
+        # 默认实现：尝试生成一个简短的测试音频
+        try:
+            test_audio = self.text_to_speech("测试")
+            return len(test_audio) > 0
+        except Exception:
+            return False

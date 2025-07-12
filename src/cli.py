@@ -161,38 +161,16 @@ def list_available_services(config_manager: ConfigManager):
 
 def process_srt(entries, output_path, config_manager, service_name, logger):
     """Process SRT entries with TTS service."""
-    # Determine which service to use
-    if service_name:
-        if service_name not in config_manager.config.services:
-            console.print(f"[red]Error:[/red] Unknown service '{service_name}'")
-            sys.exit(1)
-        service_config = config_manager.config.services[service_name]
-    else:
-        # Use the highest priority enabled service
-        services = config_manager.get_enabled_services()
-        if not services:
-            console.print("[red]Error:[/red] No TTS services enabled")
-            sys.exit(1)
-        service_name = list(services.keys())[0]
-        service_config = services[service_name]
+    # Get service with fallback support
+    tts_service, actual_service_name = get_tts_service_with_fallback(
+        config_manager, service_name, logger
+    )
     
-    console.print(f"\n[cyan]Using TTS service:[/cyan] {service_name}")
-    
-    # Check if service is registered
-    if service_name not in TTS_SERVICES:
-        console.print(f"[red]Error:[/red] Service '{service_name}' not registered")
+    if not tts_service:
+        console.print("[red]Error:[/red] No available TTS services")
         sys.exit(1)
     
-    # Initialize TTS service
-    service_class = TTS_SERVICES[service_name]
-    
-    try:
-        # Convert ServiceConfig to dict for TTS service initialization
-        # TTSService base class expects dict, while config returns Pydantic model
-        tts_service = service_class(service_config.model_dump())
-    except Exception as e:
-        console.print(f"[red]Error initializing TTS service:[/red] {str(e)}")
-        sys.exit(1)
+    console.print(f"\n[cyan]Using TTS service:[/cyan] {actual_service_name}")
     
     # Initialize audio processor
     audio_processor = AudioProcessor(output_format=output_path.suffix[1:])
@@ -235,6 +213,81 @@ def process_srt(entries, output_path, config_manager, service_name, logger):
     except Exception as e:
         console.print(f"[red]Error saving audio:[/red] {str(e)}")
         sys.exit(1)
+
+
+def get_tts_service_with_fallback(config_manager, preferred_service, logger):
+    """Get TTS service with automatic fallback.
+    
+    Args:
+        config_manager: Configuration manager instance
+        preferred_service: User-specified service name (optional)
+        logger: Logger instance
+        
+    Returns:
+        tuple: (service_instance, service_name) or (None, None) if no service available
+    """
+    # If user specified a service, try it first
+    if preferred_service:
+        if preferred_service not in config_manager.config.services:
+            console.print(f"[yellow]Warning:[/yellow] Unknown service '{preferred_service}'")
+        else:
+            service = try_initialize_service(preferred_service, config_manager, logger)
+            if service:
+                return service, preferred_service
+            console.print(f"[yellow]Warning:[/yellow] Service '{preferred_service}' not available")
+    
+    # Try services by priority
+    services = config_manager.get_enabled_services()
+    if not services:
+        return None, None
+    
+    for service_name in services:
+        console.print(f"[cyan]Trying service:[/cyan] {service_name}...")
+        service = try_initialize_service(service_name, config_manager, logger)
+        if service:
+            if service_name != preferred_service:
+                console.print(f"[yellow]Info:[/yellow] Using fallback service '{service_name}'")
+            return service, service_name
+    
+    return None, None
+
+
+def try_initialize_service(service_name, config_manager, logger):
+    """Try to initialize a TTS service.
+    
+    Args:
+        service_name: Name of the service to initialize
+        config_manager: Configuration manager instance
+        logger: Logger instance
+        
+    Returns:
+        TTSService instance or None if initialization failed
+    """
+    if service_name not in TTS_SERVICES:
+        logger.warning(f"Service '{service_name}' not registered")
+        return None
+    
+    service_config = config_manager.config.services.get(service_name)
+    if not service_config or not service_config.enabled:
+        logger.debug(f"Service '{service_name}' not enabled")
+        return None
+    
+    service_class = TTS_SERVICES[service_name]
+    
+    try:
+        # Initialize service
+        service = service_class(service_config.model_dump())
+        
+        # Check health
+        if hasattr(service, 'check_health') and not service.check_health():
+            logger.warning(f"Service '{service_name}' health check failed")
+            return None
+        
+        return service
+        
+    except Exception as e:
+        logger.warning(f"Failed to initialize '{service_name}': {str(e)}")
+        return None
 
 
 if __name__ == '__main__':

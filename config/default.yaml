@@ -55,6 +55,26 @@ services:
       sample_steps: 32  # 采样步数（仅V3版本）
       super_sampling: false  # 超采样（仅V3版本）
 
+  # Google Gemini TTS服务
+  gemini:
+    service_name: gemini
+    priority: 2  # 第二优先级（作为GPT-SoVITS的备选）
+    enabled: true  # 启用Gemini服务（需要设置GEMINI_API_KEY环境变量）
+    
+    credentials:
+      api_key: ""  # 可通过环境变量 GEMINI_API_KEY 设置
+    
+    voice_settings:
+      # 模型选择
+      model: "gemini-2.5-pro-preview-tts"  # 高质量TTS模型
+      
+      # 声音选择（30种可选）
+      voice_name: "Kore"  # 默认声音，适合中文
+      # 其他可选声音：Puck, Charon, Fenrir, Aoede, Vale, Journey 等
+      
+      # 语言设置
+      language: "auto"  # 自动检测语言（适合中英文混合）
+
   # Azure Speech Services（预留）
   azure:
     service_name: azure

@@ -4,13 +4,17 @@
 
 Google Gemini TTS是Google提供的先进文字转语音服务，作为Gemini API的一部分。本文档详细介绍如何将Gemini TTS集成到SRT2Speech项目中，作为第二个TTS服务选项。
 
+**重要说明**：
+1. 本文档基于新版 `google-genai` 库（非 `google-generativeai`），请确保使用正确的库版本。
+2. Gemini API 可能返回 base64 编码的音频数据，我们的实现包含自动检测和解码机制。
+
 ## API特性
 
 ### 核心功能
 - **多语言支持**：支持24种语言，包括中文、英文、日文、韩文等
-- **多种声音**：提供30种预设声音选择
+- **多种声音**：提供多种预设声音选择（如 Kore、Vale、Journey、Puck、Charon 等）
 - **自动语言检测**：可自动识别文本语言（适合中英文混合场景）
-- **高质量输出**：24kHz采样率，16位PCM编码的单声道WAV格式
+- **高质量输出**：24kHz采样率，16位深度的原始PCM音频数据
 
 ### 支持的语言列表
 - 阿拉伯语 (ar)
@@ -33,20 +37,63 @@ Google Gemini TTS是Google提供的先进文字转语音服务，作为Gemini AP
 ### 1. 依赖安装
 
 ```bash
-pip install google-generativeai
+pip install google-genai
 ```
 
-### 2. 服务类实现
+**注意**：必须使用 `google-genai` 库，而非 `google-generativeai`。
+
+### 2. 官方示例代码
+
+以下是Google官方提供的使用示例：
+
+```python
+from google import genai
+from google.genai import types
+import wave
+
+# 设置wave文件保存函数
+def wave_file(filename, pcm, channels=1, rate=24000, sample_width=2):
+    with wave.open(filename, "wb") as wf:
+        wf.setnchannels(channels)
+        wf.setsampwidth(sample_width)
+        wf.setframerate(rate)
+        wf.writeframes(pcm)
+
+client = genai.Client()
+
+response = client.models.generate_content(
+    model="gemini-2.5-flash-preview-tts",
+    contents="Say cheerfully: Have a wonderful day!",
+    config=types.GenerateContentConfig(
+        response_modalities=["AUDIO"],
+        speech_config=types.SpeechConfig(
+            voice_config=types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                    voice_name='Kore',
+                )
+            )
+        ),
+    )
+)
+
+data = response.candidates[0].content.parts[0].inline_data.data
+wave_file('out.wav', data)  # 保存到当前目录
+```
+
+### 3. 服务类实现
 
 创建 `src/tts/gemini.py`：
 
 ```python
 """Google Gemini TTS服务实现"""
 import io
+import os
+import wave
+import base64
 import logging
-from typing import Dict, Any
-import google.generativeai as genai
-from google.generativeai import types
+from typing import Dict, Any, Optional
+from google import genai
+from google.genai import types
 from pydub import AudioSegment
 from .base import TTSService
 
@@ -54,7 +101,11 @@ logger = logging.getLogger(__name__)
 
 
 class GeminiTTSService(TTSService):
-    """Google Gemini TTS服务"""
+    """Google Gemini TTS服务
+    
+    使用Gemini 2.5 Flash/Pro Preview TTS模型
+    支持24种语言的高质量语音合成
+    """
     
     def __init__(self, config: dict):
         """初始化Gemini TTS服务
@@ -62,30 +113,39 @@ class GeminiTTSService(TTSService):
         Args:
             config: 服务配置字典
         """
-        self.api_key = config['credentials'].get('api_key')
+        # 先设置必要的属性，再调用父类构造函数
+        self.api_key = config['credentials'].get('api_key') or os.getenv('GEMINI_API_KEY')
         self.model_name = config['voice_settings'].get('model', 'gemini-2.5-flash-preview-tts')
         self.voice_name = config['voice_settings'].get('voice_name', 'Kore')
         
         # 初始化客户端
-        genai.configure(api_key=self.api_key)
-        self.client = genai.GenerativeModel(self.model_name)
+        self.client = None
+        if self.api_key:
+            try:
+                self.client = genai.Client(api_key=self.api_key)
+                logger.info(f"初始化Gemini TTS服务，模型：{self.model_name}，声音：{self.voice_name}")
+            except Exception as e:
+                logger.error(f"初始化Gemini客户端失败：{e}")
         
+        # 调用父类构造函数，会触发validate_config
         super().__init__(config)
-        logger.info(f"初始化Gemini TTS服务，模型：{self.model_name}，声音：{self.voice_name}")
     
     def validate_config(self) -> None:
         """验证配置有效性"""
         if not self.api_key:
-            # 尝试从环境变量获取
-            import os
-            self.api_key = os.getenv('GEMINI_API_KEY')
-            if not self.api_key:
-                raise ValueError("缺少Gemini API密钥：请设置 credentials.api_key 或 GEMINI_API_KEY 环境变量")
+            raise ValueError(
+                "缺少Gemini API密钥：请设置 credentials.api_key 或 GEMINI_API_KEY 环境变量"
+            )
+        
+        if not self.client:
+            raise ValueError("无法初始化Gemini客户端")
         
         # 验证模型名称
         valid_models = ['gemini-2.5-flash-preview-tts', 'gemini-2.5-pro-preview-tts']
         if self.model_name not in valid_models:
-            raise ValueError(f"无效的模型名称：{self.model_name}，有效选项：{valid_models}")
+            logger.warning(
+                f"模型 {self.model_name} 可能不支持TTS，推荐使用：{valid_models}"
+            )
     
     def text_to_speech(self, text: str) -> AudioSegment:
         """将文本转换为语音
@@ -97,32 +157,81 @@ class GeminiTTSService(TTSService):
             AudioSegment: 音频片段
         """
         try:
-            # 调用Gemini API
-            response = self.client.generate_content(
-                contents=text,
-                generation_config=types.GenerateContentConfig(
-                    response_modalities=["AUDIO"],
-                    speech_config=types.SpeechConfig(
-                        voice_config=types.VoiceConfig(
-                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                                voice_name=self.voice_name,
-                            )
+            # 构建生成配置
+            config = types.GenerateContentConfig(
+                # 设置响应类型为音频
+                response_modalities=["AUDIO"],
+                # 配置语音参数
+                speech_config=types.SpeechConfig(
+                    voice_config=types.VoiceConfig(
+                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                            voice_name=self.voice_name
                         )
-                    ),
+                    )
                 )
             )
             
-            # 从响应中提取音频数据
-            if not response.audio:
-                raise Exception("API未返回音频数据")
+            # 调用模型生成音频
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=text,
+                config=config
+            )
             
-            # 将音频数据转换为AudioSegment
-            # Gemini返回的是24kHz WAV格式
-            audio_data = response.audio[0].data
-            audio = AudioSegment.from_wav(io.BytesIO(audio_data))
+            # 检查响应
+            if not response or not response.candidates:
+                raise Exception("API未返回响应")
+            
+            # 从响应中提取音频数据
+            candidate = response.candidates[0]
+            if not candidate.content or not candidate.content.parts:
+                raise Exception("响应中没有内容")
+            
+            # 获取音频数据
+            audio_data = candidate.content.parts[0].inline_data.data
+            
+            # 智能检测数据格式（重要：API可能返回base64编码的数据）
+            if isinstance(audio_data, str):
+                # 如果是字符串，尝试base64解码
+                try:
+                    audio_data = base64.b64decode(audio_data)
+                    logger.debug("音频数据已从base64字符串解码")
+                except Exception as e:
+                    logger.warning(f"Base64解码失败，尝试转换为bytes: {e}")
+                    audio_data = audio_data.encode()
+            elif isinstance(audio_data, bytes):
+                # 检测是否可能是base64编码的bytes
+                try:
+                    # 尝试解码，如果成功且是有效音频数据则使用
+                    decoded = base64.b64decode(audio_data, validate=True)
+                    # 简单检查：PCM数据应该有一定长度
+                    if len(decoded) > 1000:
+                        audio_data = decoded
+                        logger.debug("音频数据已从base64 bytes解码")
+                except Exception:
+                    # 不是base64，保持原样
+                    logger.debug("音频数据是原始二进制格式")
+            
+            # 添加调试日志
+            logger.debug(f"音频数据类型: {type(audio_data)}, 长度: {len(audio_data) if audio_data else 0}")
+            
+            # Gemini返回的是原始PCM数据，需要构建WAV格式
+            wav_buffer = io.BytesIO()
+            with wave.open(wav_buffer, 'wb') as wav_file:
+                wav_file.setnchannels(1)  # 单声道
+                wav_file.setsampwidth(2)  # 16位（2字节）
+                wav_file.setframerate(24000)  # 24kHz
+                wav_file.writeframes(audio_data)
+            
+            # 回到开始位置
+            wav_buffer.seek(0)
+            
+            # 转换为AudioSegment
+            audio = AudioSegment.from_wav(wav_buffer)
             
             # 转换为项目标准格式（32kHz）
-            audio = audio.set_frame_rate(32000)
+            if audio.frame_rate != 32000:
+                audio = audio.set_frame_rate(32000)
             
             logger.info(f"文本转语音成功，时长：{len(audio)/1000:.2f}秒")
             return audio
@@ -131,28 +240,68 @@ class GeminiTTSService(TTSService):
             logger.error(f"Gemini TTS调用失败：{str(e)}")
             raise
     
-    def _check_service_health(self) -> bool:
-        """检查服务健康状态"""
+    def check_health(self) -> bool:
+        """检查服务健康状态
+        
+        Returns:
+            bool: 服务是否可用
+        """
+        if not self.client:
+            return False
+            
         try:
-            # 尝试生成一个简单的测试音频
-            test_response = self.client.generate_content(
-                contents="测试",
-                generation_config=types.GenerateContentConfig(
-                    response_modalities=["AUDIO"],
-                    speech_config=types.SpeechConfig(
-                        voice_config=types.VoiceConfig(
-                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                                voice_name=self.voice_name,
-                            )
+            # 生成一个简短的测试音频
+            config = types.GenerateContentConfig(
+                response_modalities=["AUDIO"],
+                speech_config=types.SpeechConfig(
+                    voice_config=types.VoiceConfig(
+                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                            voice_name=self.voice_name
                         )
-                    ),
+                    )
                 )
             )
-            return bool(test_response.audio)
+            
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents="测试",
+                config=config
+            )
+            
+            return bool(response)
+            
         except Exception as e:
             logger.warning(f"Gemini服务健康检查失败：{str(e)}")
             return False
 ```
+
+## API响应格式详解
+
+### 响应结构
+```python
+# API响应结构
+response = {
+    "candidates": [
+        {
+            "content": {
+                "parts": [
+                    {
+                        "inline_data": {
+                            "data": b"...",  # 原始PCM字节数据
+                            "mime_type": "audio/wav"  # MIME类型标识
+                        }
+                    }
+                ]
+            }
+        }
+    ]
+}
+```
+
+### 数据处理流程
+1. **提取PCM数据**：`response.candidates[0].content.parts[0].inline_data.data`
+2. **构建WAV格式**：使用Python的wave模块添加文件头
+3. **格式转换**：使用pydub处理音频格式
 
 ### 3. 配置文件更新
 
@@ -342,13 +491,20 @@ if __name__ == "__main__":
 
 ### 1. API限制
 - 预览版本可能有使用限制
-- 32,000 token的上下文窗口限制
 - 仅支持纯文本输入（不支持SSML）
+- **重要**：API返回的是原始PCM数据，不是WAV格式
 
 ### 2. 音频格式
-- 输出：24kHz单声道WAV
-- 需要转换为项目标准格式（32kHz）
-- 自动处理采样率转换
+- **API返回格式**：原始PCM数据（非WAV格式）
+- **音频参数**：
+  - 采样率：24000 Hz
+  - 位深：16 bit（2字节）
+  - 声道数：1（单声道）
+- **处理流程**：
+  1. 接收原始PCM数据
+  2. 使用wave模块构建WAV文件头
+  3. 转换为AudioSegment对象
+  4. 转换为项目标准格式（32kHz）
 
 ### 3. 错误处理
 - API密钥验证
@@ -360,6 +516,21 @@ if __name__ == "__main__":
 - 选择合适的模型（flash为快速，pro为高质量）
 - 利用自动语言检测处理混合文本
 - 实现重试机制应对临时故障
+- **正确处理PCM数据**：不要假设返回的是WAV格式
+
+## 常见问题
+
+### Q: 为什么生成的音频是噪音？
+A: 这通常是因为没有正确处理base64编码。Gemini API在某些情况下会返回base64编码的PCM数据，而不是原始二进制数据。我们的实现包含了智能检测机制，会自动识别并解码base64数据。
+
+### Q: 应该使用哪个库？
+A: 必须使用 `google-genai` 库，而不是 `google-generativeai`。这是新版API。
+
+### Q: 如何判断数据是否需要base64解码？
+A: 我们的实现会自动检测：
+- 如果数据是字符串类型，尝试base64解码
+- 如果是bytes类型，尝试验证是否为base64编码
+- 通过数据长度和格式特征判断是否解码成功
 
 ## 与GPT-SoVITS的对比
 

@@ -47,11 +47,15 @@ class GPTSoVITSService(TTSService):
                 raise ValueError(f"缺少必需的配置项：voice_settings.{field}")
         
         # 验证服务连接
-        if not self._check_service_health():
+        if not self.check_health():
             raise ConnectionError(f"无法连接到GPT-SoVITS服务：{self.api_url}")
     
-    def _check_service_health(self) -> bool:
-        """检查服务是否可用"""
+    def check_health(self) -> bool:
+        """检查服务是否可用
+        
+        Returns:
+            bool: 服务是否可用
+        """
         try:
             response = requests.get(
                 f"{self.api_url}/", 
