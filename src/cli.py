@@ -23,7 +23,7 @@ console = Console()
               default='config/default.yaml',
               help='Configuration file path')
 @click.option('-s', '--service', 'service_name',
-              help='TTS service to use (e.g., google, azure)')
+              help='TTS service to use')
 @click.option('--preview', type=int, 
               help='Preview mode: process only first N subtitles')
 @click.option('--debug', is_flag=True, 
@@ -36,7 +36,7 @@ def main(input_file, output_file, config_path, service_name, preview, debug, lis
     
     Example:
         srt2speech -i input.srt -o output.wav
-        srt2speech -i input.srt -o output.wav --service google
+        srt2speech -i input.srt -o output.wav --service gptsovits
         srt2speech -i input.srt -o output.wav --preview 5
         srt2speech --list-services
     """
@@ -184,7 +184,9 @@ def process_srt(entries, output_path, config_manager, service_name, logger):
     service_class = TTS_SERVICES[service_name]
     
     try:
-        tts_service = service_class(service_config)
+        # Convert ServiceConfig to dict for TTS service initialization
+        # TTSService base class expects dict, while config returns Pydantic model
+        tts_service = service_class(service_config.model_dump())
     except Exception as e:
         console.print(f"[red]Error initializing TTS service:[/red] {str(e)}")
         sys.exit(1)
@@ -210,7 +212,7 @@ def process_srt(entries, output_path, config_manager, service_name, logger):
                 
                 # Add to processor
                 audio_processor.add_audio_segment(
-                    entry.start.total_seconds(),
+                    entry.start_time.total_seconds(),
                     audio
                 )
                 

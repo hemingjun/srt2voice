@@ -14,7 +14,7 @@ services:
     
     voice_settings:
       # 基础设置（必需）
-      language: "zh"  # 语言：zh（中文）、en（英文）、ja（日文）、ko（韩文）、yue（粤语）
+      language: "auto"  # 语言：zh（中文）、en（英文）、ja（日文）、ko（韩文）、yue（粤语）、auto（多语种混合）
       
       # 参考音频配置 - 选择其中一种方式：
       
