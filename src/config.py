@@ -41,6 +41,10 @@ class ServiceConfig(BaseModel):
     credentials: Dict[str, str] = Field(default_factory=dict, description="Service credentials")
     voice_settings: VoiceSettings = Field(default_factory=VoiceSettings, description="Voice settings")
     auto_start: Optional[Dict[str, Any]] = Field(default=None, description="Auto-start configuration for services")
+    connection: Optional[Dict[str, Any]] = Field(default=None, description="Connection configuration")
+    retry_strategy: Optional[Dict[str, Any]] = Field(default=None, description="Retry strategy configuration")
+    runtime: Optional[Dict[str, Any]] = Field(default=None, description="Runtime configuration")
+    audio: Optional[Dict[str, Any]] = Field(default=None, description="Audio processing configuration")
     
     @validator('credentials')
     def validate_credentials(cls, v, values):

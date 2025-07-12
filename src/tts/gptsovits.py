@@ -50,9 +50,21 @@ class GPTSoVITSService(TTSService):
         self.api_version = config['credentials'].get('api_version', 'v2')
         self.voice_settings = config['voice_settings']
         
-        # 设置默认超时时间
-        self.timeout = 30
-        self.max_retries = 3
+        # 从配置中读取连接参数
+        connection_config = config.get('connection', {})
+        self.timeout = connection_config.get('timeout', 30)
+        self.health_check_timeout = connection_config.get('health_check_timeout', 5)
+        self.max_retries = connection_config.get('max_retries', 3)
+        
+        # 从配置中读取重试策略
+        retry_config = config.get('retry_strategy', {})
+        self.initial_delay = retry_config.get('initial_delay', 1.0)
+        self.max_delay = retry_config.get('max_delay', 2.0)
+        self.connection_retry_delay = retry_config.get('connection_retry_delay', 2.0)
+        
+        # 从配置中读取音频处理参数
+        audio_config = config.get('audio', {})
+        self.silence_duration = audio_config.get('silence_duration', 100)
         
         # 标记服务是否被手动停止
         self._manually_stopped = False
@@ -66,7 +78,11 @@ class GPTSoVITSService(TTSService):
         logger.debug(f"Auto-start config: {auto_start_config}")
         if auto_start_config.get('enabled', False):
             logger.info("✅ GPT-SoVITS 自动启动已启用")
-            self.service_manager = GPTSoVITSManager(auto_start_config, api_version=self.api_version)
+            self.service_manager = GPTSoVITSManager(
+                auto_start_config, 
+                full_service_config=config,
+                api_version=self.api_version
+            )
             # 不再注册atexit，依靠信号处理器和_active_services集合管理生命周期
         else:
             logger.debug("自动启动未启用或未配置")
@@ -126,7 +142,7 @@ class GPTSoVITSService(TTSService):
         try:
             response = requests.get(
                 f"{self.api_url}/", 
-                timeout=5
+                timeout=self.health_check_timeout
             )
             return response.status_code < 500
         except Exception as e:
@@ -144,7 +160,7 @@ class GPTSoVITSService(TTSService):
         """
         if not text.strip():
             # 返回静音片段
-            return AudioSegment.silent(duration=100)
+            return AudioSegment.silent(duration=self.silence_duration)
         
         # 根据API版本选择不同的请求方式
         if self.api_version == 'v2':
@@ -242,7 +258,7 @@ class GPTSoVITSService(TTSService):
                     
                     if attempt < self.max_retries - 1:
                         logger.warning(f"{error_msg}，正在重试...")
-                        time.sleep(1)
+                        time.sleep(self.initial_delay)
                         continue
                     else:
                         raise Exception(error_msg)
@@ -250,7 +266,7 @@ class GPTSoVITSService(TTSService):
             except requests.exceptions.Timeout:
                 if attempt < self.max_retries - 1:
                     logger.warning(f"请求超时，正在重试 ({attempt + 1}/{self.max_retries})...")
-                    time.sleep(1)
+                    time.sleep(self.initial_delay)
                     continue
                 else:
                     raise Exception("TTS请求超时")
@@ -262,7 +278,7 @@ class GPTSoVITSService(TTSService):
                 
                 if attempt < self.max_retries - 1:
                     logger.warning(f"连接失败，正在重试 ({attempt + 1}/{self.max_retries})...")
-                    time.sleep(2)
+                    time.sleep(self.connection_retry_delay)
                     continue
                 else:
                     raise Exception(f"无法连接到GPT-SoVITS服务：{self.api_url}")
@@ -272,7 +288,7 @@ class GPTSoVITSService(TTSService):
                     # GPU内存不足，尝试降低batch_size
                     logger.warning("GPU内存不足，降低batch_size后重试...")
                     self.voice_settings['batch_size'] = 1
-                    time.sleep(2)
+                    time.sleep(self.max_delay)
                     continue
                 else:
                     raise

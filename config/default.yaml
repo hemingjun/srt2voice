@@ -19,6 +19,33 @@ services:
       startup_timeout: 30  # 启动超时时间（秒）
       use_command_script: false  # 对于API v2，建议设为false直接使用Python启动
     
+    # 连接配置（可选）
+    connection:
+      host: "127.0.0.1"  # API监听地址
+      port: 9880  # API监听端口
+      timeout: 30  # 请求超时时间（秒）
+      health_check_timeout: 5  # 健康检查超时时间（秒）
+      max_retries: 3  # 最大重试次数
+    
+    # 重试策略（可选）
+    retry_strategy:
+      initial_delay: 1.0  # 初始重试延迟（秒）
+      max_delay: 2.0  # 最大重试延迟（秒）
+      connection_retry_delay: 2.0  # 连接失败重试延迟（秒）
+    
+    # 运行时配置（可选）
+    runtime:
+      python_path: "runtime/bin/python3"  # Python路径（相对于gpt_sovits_path）
+      fallback_python: "python"  # 备用Python命令
+      api_script_v1: "api.py"  # API v1脚本名
+      api_script_v2: "api_v2.py"  # API v2脚本名
+      config_file: "GPT_SoVITS/configs/tts_infer.yaml"  # 配置文件路径
+      shutdown_wait: 0.5  # 关闭服务等待时间（秒）
+    
+    # 音频处理配置（可选）
+    audio:
+      silence_duration: 100  # 静音片段时长（毫秒）
+    
     voice_settings:
       # 基础设置（必需）
       language: "auto"  # 语言：zh（中文）、en（英文）、ja（日文）、ko（韩文）、yue（粤语）、auto（多语种混合）
