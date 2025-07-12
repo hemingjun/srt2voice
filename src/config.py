@@ -40,6 +40,7 @@ class ServiceConfig(BaseModel):
     enabled: bool = Field(default=True, description="Whether the service is enabled")
     credentials: Dict[str, str] = Field(default_factory=dict, description="Service credentials")
     voice_settings: VoiceSettings = Field(default_factory=VoiceSettings, description="Voice settings")
+    auto_start: Optional[Dict[str, Any]] = Field(default=None, description="Auto-start configuration for services")
     
     @validator('credentials')
     def validate_credentials(cls, v, values):
@@ -78,7 +79,24 @@ class Config(BaseModel):
 
 class ConfigManager:
     def __init__(self, config_path: Optional[str] = None):
-        self.config_path = Path(config_path) if config_path else Path('config/default.yaml')
+        if config_path:
+            self.config_path = Path(config_path)
+        else:
+            # 尝试多个位置查找配置文件
+            possible_paths = [
+                Path('config/default.yaml'),  # 当前目录
+                Path(__file__).parent.parent / 'config' / 'default.yaml',  # 相对于源码的位置
+                Path.home() / '.config' / 'srt2speech' / 'default.yaml',  # 用户配置目录
+            ]
+            
+            for path in possible_paths:
+                if path.exists():
+                    self.config_path = path
+                    break
+            else:
+                # 如果都不存在，使用默认路径
+                self.config_path = Path(__file__).parent.parent / 'config' / 'default.yaml'
+        
         self.config = self._load_config()
     
     def _load_config(self) -> Config:

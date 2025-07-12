@@ -12,6 +12,13 @@ services:
       api_url: "http://127.0.0.1:9880"  # GPT-SoVITS API地址
       api_version: "v2"  # API版本：v1 或 v2（推荐v2）
     
+    # 自动启动设置（可选）
+    auto_start:
+      enabled: true  # 是否自动启动GPT-SoVITS服务
+      gpt_sovits_path: "/Users/mingjun/Documents/Git Project/GPT-SoVITS"  # GPT-SoVITS项目路径，例如："/Users/mingjun/Documents/Git Project/GPT-SoVITS"
+      startup_timeout: 30  # 启动超时时间（秒）
+      use_command_script: false  # 对于API v2，建议设为false直接使用Python启动
+    
     voice_settings:
       # 基础设置（必需）
       language: "auto"  # 语言：zh（中文）、en（英文）、ja（日文）、ko（韩文）、yue（粤语）、auto（多语种混合）
@@ -118,9 +125,18 @@ logging:
   file: null
 
 # 使用说明：
-# 1. 启动GPT-SoVITS服务：
-#    cd /path/to/GPT-SoVITS
-#    python api_v2.py -a 127.0.0.1 -p 9880
+# 1. GPT-SoVITS服务启动方式：
+#    
+#    方式一：自动启动（推荐）
+#    - 设置 auto_start.enabled: true
+#    - 设置 auto_start.gpt_sovits_path 为您的GPT-SoVITS项目路径
+#    - 运行srt2speech时会自动启动服务
+#    
+#    方式二：手动启动
+#    - 保持 auto_start.enabled: false
+#    - 手动启动服务：
+#      cd /path/to/GPT-SoVITS
+#      python api_v2.py -a 127.0.0.1 -p 9880
 #
 # 2. 准备参考音频：
 #    - 建议使用3-10秒的清晰语音

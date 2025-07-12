@@ -1,7 +1,7 @@
 # 默认参考音频配置
 # 这里可以配置您常用的参考音频
 voice_name: "默认音色"
-ref_audio_path: "/Users/mingjun/Documents/Claude Project/srt2speech/assets/reference_audio/reference_8s.wav"
+ref_audio_path: "/Users/mingjun/Documents/Claude Project/srt2speech/config/reference_audio/reference_8s.wav"
 prompt_text: "爱尔兰是全球顶级的高尔夫圣地，这里有超过400个球场，凯特琳城堡球"
 prompt_lang: "zh"
 

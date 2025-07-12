@@ -2,13 +2,38 @@
 import io
 import logging
 import time
+import signal
 from typing import Dict, Any, Optional
 import requests
 from pydub import AudioSegment
+from rich.console import Console
 from .base import TTSService
+from ..utils.gpt_sovits_manager import GPTSoVITSManager
 
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('srt2speech.gptsovits')
+
+# 全局集合，跟踪所有活动的服务实例
+_active_services = set()
+
+
+def _signal_handler(signum, frame):
+    """信号处理器，确保所有服务被正确清理"""
+    # 延迟一下，让CLI先输出消息
+    import time
+    time.sleep(0.1)
+    
+    # 创建服务列表的副本，避免在迭代时修改集合
+    services_to_cleanup = list(_active_services)
+    if services_to_cleanup:
+        for service in services_to_cleanup:
+            if hasattr(service, '_cleanup'):
+                service._cleanup()
+
+
+# 注册信号处理器
+signal.signal(signal.SIGINT, _signal_handler)
+signal.signal(signal.SIGTERM, _signal_handler)
 
 
 class GPTSoVITSService(TTSService):
@@ -29,10 +54,37 @@ class GPTSoVITSService(TTSService):
         self.timeout = 30
         self.max_retries = 3
         
+        # 标记服务是否被手动停止
+        self._manually_stopped = False
+        
+        # 添加调试日志
+        logger.debug(f"Creating GPTSoVITSService instance: {id(self)}")
+        
+        # 初始化服务管理器
+        self.service_manager = None
+        auto_start_config = config.get('auto_start', {})
+        logger.debug(f"Auto-start config: {auto_start_config}")
+        if auto_start_config.get('enabled', False):
+            logger.info("✅ GPT-SoVITS 自动启动已启用")
+            self.service_manager = GPTSoVITSManager(auto_start_config, api_version=self.api_version)
+            # 不再注册atexit，依靠信号处理器和_active_services集合管理生命周期
+        else:
+            logger.debug("自动启动未启用或未配置")
+        
         # 调用父类初始化，会触发validate_config
         super().__init__(config)
         
+        # 将实例添加到活动服务集合中
+        _active_services.add(self)
+        logger.debug(f"Added instance {id(self)} to _active_services, total: {len(_active_services)}")
+        
         logger.info(f"初始化GPT-SoVITS服务，API地址：{self.api_url}，版本：{self.api_version}")
+    
+    def __del__(self):
+        """析构函数，用于调试"""
+        logger.debug(f"GPTSoVITSService instance {id(self)} is being destroyed")
+        if hasattr(self, 'service_manager') and self.service_manager:
+            logger.warning(f"Instance {id(self)} being destroyed with active service_manager!")
     
     def validate_config(self) -> None:
         """验证配置有效性"""
@@ -41,10 +93,25 @@ class GPTSoVITSService(TTSService):
             if field not in self.config['credentials']:
                 raise ValueError(f"缺少必需的配置项：credentials.{field}")
         
+        # 如果使用voice_profile，这些字段可能在profile中定义
+        # 先检查是否所有必需字段都存在
         required_voice_fields = ['language', 'ref_audio_path', 'prompt_text', 'prompt_lang']
-        for field in required_voice_fields:
-            if field not in self.voice_settings:
-                raise ValueError(f"缺少必需的配置项：voice_settings.{field}")
+        missing_fields = [field for field in required_voice_fields if field not in self.voice_settings]
+        
+        if missing_fields:
+            # 如果有缺失字段，但配置了voice_profile，给出更清晰的错误信息
+            if 'voice_profile' in self.voice_settings:
+                raise ValueError(f"voice_profile配置可能有问题，缺少必需字段：{', '.join(missing_fields)}")
+            else:
+                raise ValueError(f"缺少必需的配置项：voice_settings.{missing_fields[0]}")
+        
+        # 尝试自动启动服务（如果配置了）
+        if self.service_manager and not self.check_health():
+            console = Console()
+            console.print("[yellow]🔍 GPT-SoVITS服务未运行，正在自动启动...[/yellow]")
+            if not self.service_manager.start_service(self.api_url):
+                raise ConnectionError(f"无法自动启动GPT-SoVITS服务")
+            console.print("[green]✅ GPT-SoVITS API 服务已成功启动！[/green]")
         
         # 验证服务连接
         if not self.check_health():
@@ -63,7 +130,7 @@ class GPTSoVITSService(TTSService):
             )
             return response.status_code < 500
         except Exception as e:
-            logger.warning(f"GPT-SoVITS服务健康检查失败：{e}")
+            logger.debug(f"GPT-SoVITS服务健康检查失败：{e}")
             return False
     
     def text_to_speech(self, text: str) -> AudioSegment:
@@ -133,6 +200,10 @@ class GPTSoVITSService(TTSService):
     def _make_request(self, method: str, url: str, **kwargs) -> AudioSegment:
         """发送HTTP请求并处理响应"""
         for attempt in range(self.max_retries):
+            # 如果服务已被手动停止，立即退出
+            if self._manually_stopped:
+                raise Exception("GPT-SoVITS服务已被停止")
+            
             try:
                 if method == 'GET':
                     response = requests.get(url, timeout=self.timeout, **kwargs)
@@ -185,6 +256,10 @@ class GPTSoVITSService(TTSService):
                     raise Exception("TTS请求超时")
                     
             except requests.exceptions.ConnectionError:
+                # 检查是否有服务被手动停止
+                if any(hasattr(s, '_manually_stopped') and s._manually_stopped for s in _active_services):
+                    raise Exception("GPT-SoVITS服务已被停止")
+                
                 if attempt < self.max_retries - 1:
                     logger.warning(f"连接失败，正在重试 ({attempt + 1}/{self.max_retries})...")
                     time.sleep(2)
@@ -238,3 +313,22 @@ class GPTSoVITSService(TTSService):
         except Exception as e:
             logger.error(f"切换模型时发生错误：{e}")
             return False
+    
+    def _cleanup(self) -> None:
+        """清理资源，停止自动启动的服务"""
+        logger.debug(f"_cleanup called for instance {id(self)}, stack trace:")
+        import traceback
+        logger.debug(''.join(traceback.format_stack()))
+        
+        self._manually_stopped = True
+        
+        if self.service_manager:
+            try:
+                self.service_manager.stop_service()
+                self.service_manager = None  # 防止重复清理
+            except Exception as e:
+                logger.error(f"清理服务时发生错误：{e}")
+        
+        # 从活动服务集合中移除
+        _active_services.discard(self)
+        logger.debug(f"Removed instance {id(self)} from _active_services, remaining: {len(_active_services)}")

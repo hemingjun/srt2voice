@@ -141,12 +141,18 @@ def main(input_file, output_file, config_path, service_name, preview, debug, lis
             console.print(table)
         
     except KeyboardInterrupt:
-        console.print("\n[yellow]Interrupted by user[/yellow]")
+        console.print("\n[yellow]⚠️  正在停止任务处理...[/yellow]")
+        # 给一点时间让当前任务完成
+        import time
+        time.sleep(0.5)
+        console.print("[yellow]任务已停止，正在清理服务...[/yellow]")
+        # 清理逻辑会由信号处理器自动处理
         sys.exit(1)
     except Exception as e:
         console.print(f"\n[red]Unexpected error:[/red] {str(e)}")
         if debug:
             console.print_exception()
+        # 清理逻辑会由信号处理器自动处理
         sys.exit(1)
 
 
@@ -302,12 +308,18 @@ def try_initialize_service(service_name, config_manager, logger):
         # Check health
         if hasattr(service, 'check_health') and not service.check_health():
             logger.warning(f"Service '{service_name}' health check failed")
+            # 清理已创建的服务实例
+            if hasattr(service, '_cleanup'):
+                service._cleanup()
             return None
         
         return service
         
     except Exception as e:
         logger.warning(f"Failed to initialize '{service_name}': {str(e)}")
+        # 如果服务实例已创建，需要清理
+        if 'service' in locals() and hasattr(service, '_cleanup'):
+            service._cleanup()
         return None
 
 
