@@ -55,23 +55,6 @@ services:
       sample_steps: 32  # 采样步数（仅V3版本）
       super_sampling: false  # 超采样（仅V3版本）
 
-  # Google Cloud Text-to-Speech（备选）
-  google:
-    service_name: google
-    priority: 2
-    enabled: false  # 默认禁用，需要时启用
-    credentials:
-      # 设置 GOOGLE_APPLICATION_CREDENTIALS 环境变量
-      # 或在此指定密钥文件路径
-      key_file: ""
-    voice_settings:
-      language: zh-CN
-      gender: FEMALE
-      name: zh-CN-Standard-A
-      speaking_rate: 1.0
-      pitch: 0.0
-      volume_gain_db: 0.0
-
   # Azure Speech Services（预留）
   azure:
     service_name: azure

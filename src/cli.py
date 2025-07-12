@@ -7,7 +7,7 @@ from rich.table import Table
 from .config import ConfigManager
 from .parser.srt import SRTParser
 from .utils.logger import setup_logger
-from .tts import GoogleTTSService
+from .tts import TTS_SERVICES
 from .audio import AudioProcessor
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeRemainingColumn
 
@@ -160,10 +160,10 @@ def process_srt(entries, output_path, config_manager, service_name, logger):
     """Process SRT entries with TTS service."""
     # Determine which service to use
     if service_name:
-        if service_name not in config_manager.config.tts_services:
+        if service_name not in config_manager.config.services:
             console.print(f"[red]Error:[/red] Unknown service '{service_name}'")
             sys.exit(1)
-        tts_config = config_manager.config.tts_services[service_name]
+        service_config = config_manager.config.services[service_name]
     else:
         # Use the highest priority enabled service
         services = config_manager.get_enabled_services()
@@ -171,26 +171,20 @@ def process_srt(entries, output_path, config_manager, service_name, logger):
             console.print("[red]Error:[/red] No TTS services enabled")
             sys.exit(1)
         service_name = list(services.keys())[0]
-        tts_config = services[service_name]
+        service_config = services[service_name]
     
     console.print(f"\n[cyan]Using TTS service:[/cyan] {service_name}")
     
-    # Initialize TTS service (currently only Google is implemented)
-    if service_name != 'google':
-        console.print(f"[red]Error:[/red] Service '{service_name}' not yet implemented")
+    # Check if service is registered
+    if service_name not in TTS_SERVICES:
+        console.print(f"[red]Error:[/red] Service '{service_name}' not registered")
         sys.exit(1)
     
-    # Convert config to dict for TTS service
-    tts_service_config = {
-        'api_key_path': tts_config.api_key_path,
-        'language_code': tts_config.voice_settings.language,
-        'voice_name': tts_config.voice_settings.name,
-        'speaking_rate': tts_config.voice_settings.speed,
-        'pitch': tts_config.voice_settings.pitch
-    }
+    # Initialize TTS service
+    service_class = TTS_SERVICES[service_name]
     
     try:
-        tts_service = GoogleTTSService(tts_service_config)
+        tts_service = service_class(service_config)
     except Exception as e:
         console.print(f"[red]Error initializing TTS service:[/red] {str(e)}")
         sys.exit(1)

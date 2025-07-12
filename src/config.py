@@ -46,11 +46,7 @@ class ServiceConfig(BaseModel):
         service_name = values.get('service_name')
         if not v and service_name:
             # Try to load from environment variables
-            if service_name == 'google':
-                key_file = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
-                if key_file:
-                    v['key_file'] = key_file
-            elif service_name == 'azure':
+            if service_name == 'azure':
                 v['subscription_key'] = os.getenv('AZURE_SPEECH_KEY', '')
                 v['region'] = os.getenv('AZURE_SPEECH_REGION', 'eastus')
         return v
