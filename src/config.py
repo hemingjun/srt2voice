@@ -29,6 +29,10 @@ class VoiceSettings(BaseModel):
     media_type: Optional[str] = Field(default="wav", description="Media type")
     streaming_mode: Optional[bool] = Field(default=False, description="Streaming mode")
     
+    # Gemini TTS specific fields
+    model: Optional[str] = Field(default=None, description="Gemini model name")
+    voice_name: Optional[str] = Field(default=None, description="Gemini voice name")
+    
     # Allow extra fields for flexibility
     class Config:
         extra = "allow"
