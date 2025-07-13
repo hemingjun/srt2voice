@@ -1,0 +1,77 @@
+# 情感控制配置文件
+# 定义可用的情感类型和服务特定的参数映射
+
+# 自定义情感定义
+emotions:
+  # 可以在这里添加自定义情感
+  dramatic:
+    name: "戏剧性"
+    description: "富有戏剧张力的语调"
+  
+  gentle:
+    name: "温柔"
+    description: "轻柔舒缓的语调"
+
+# 服务特定的参数映射
+service_mappings:
+  gpt_sovits:
+    # GPT-SoVITS 服务的情感参数映射
+    dramatic:
+      temperature: 0.7
+      top_k: 8
+      top_p: 0.95
+      speed_factor: 0.85
+      repetition_penalty: 1.2
+    
+    gentle:
+      temperature: 0.4
+      top_k: 4
+      top_p: 0.8
+      speed_factor: 0.9
+      repetition_penalty: 1.3
+  
+  gemini:
+    # Gemini 服务的声音映射
+    dramatic:
+      voice_name: "Charon"  # 使用深沉的声音
+    
+    gentle:
+      voice_name: "Aoede"   # 使用温柔的声音
+
+# 情感序列示例（可选）
+# 用于批量设置不同字幕的情感
+sequence_examples:
+  documentary:
+    default: neutral
+    sequence:
+      - range: [1, 5]
+        emotion: professional
+      - index: 10
+        emotion: emphasis
+      - range: [20, 25]
+        emotion: friendly
+  
+  story:
+    default: storytelling
+    sequence:
+      - range: [1, 3]
+        emotion: gentle
+      - range: [10, 15]
+        emotion: dramatic
+      - index: 30
+        emotion: emphasis
+
+# 使用说明：
+# 1. 在命令行使用 --emotion 参数指定默认情感
+#    例如: srt2speech input.srt --emotion friendly
+#
+# 2. 使用 --emotion-file 指定情感序列文件
+#    例如: srt2speech input.srt --emotion-file emotions_sequence.yaml
+#
+# 3. 情感序列文件格式示例：
+#    default: neutral
+#    sequence:
+#      - range: [1, 10]    # 字幕1-10使用friendly
+#        emotion: friendly
+#      - index: 15         # 字幕15使用emphasis
+#        emotion: emphasis

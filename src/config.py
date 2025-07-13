@@ -71,7 +71,10 @@ class Config(BaseModel):
     audio_processing: Dict[str, Any] = Field(default_factory=lambda: {
         'normalize': True,
         'remove_silence': False,
-        'crossfade_duration': 0.01
+        'crossfade_duration': 0.01,
+        'overlap_handling': 'speed_adjust',  # Options: 'speed_adjust', 'truncate', 'warn_only'
+        'speed_adjust_limit': 1.5,  # Maximum speed adjustment factor
+        'fade_duration': 0.05  # Fade duration in seconds for truncation
     })
     cache: Dict[str, Any] = Field(default_factory=lambda: {
         'enabled': True,
@@ -131,24 +134,36 @@ class ConfigManager:
                 continue
                 
             voice_settings = service_config.get('voice_settings', {})
+            if not voice_settings:  # 添加None检查
+                continue
+                
             voice_profile = voice_settings.get('voice_profile')
             
             if voice_profile:
                 # 加载voice profile配置
                 profile_path = Path(f'config/reference_voices/{voice_profile}.yaml')
                 if profile_path.exists():
-                    with open(profile_path, 'r', encoding='utf-8') as f:
-                        profile_data = yaml.safe_load(f) or {}
-                    
-                    # 合并配置（profile配置优先）
-                    for key in ['ref_audio_path', 'prompt_text', 'prompt_lang']:
-                        if key in profile_data:
-                            voice_settings[key] = profile_data[key]
-                    
-                    # 删除voice_profile字段，避免传递给服务
-                    del voice_settings['voice_profile']
+                    try:
+                        with open(profile_path, 'r', encoding='utf-8') as f:
+                            profile_data = yaml.safe_load(f) or {}
+                        
+                        # 合并配置（profile配置优先）
+                        for key in ['ref_audio_path', 'prompt_text', 'prompt_lang']:
+                            if key in profile_data:
+                                voice_settings[key] = profile_data[key]
+                        
+                        # 删除voice_profile字段，避免传递给服务
+                        del voice_settings['voice_profile']
+                    except Exception as e:
+                        print(f"警告：加载voice profile失败 {profile_path}: {e}")
+                        # 保留原始配置，但删除voice_profile避免传递给服务
+                        if 'voice_profile' in voice_settings:
+                            del voice_settings['voice_profile']
                 else:
                     print(f"警告：找不到voice profile配置文件: {profile_path}")
+                    # 删除voice_profile字段，避免传递给服务
+                    if 'voice_profile' in voice_settings:
+                        del voice_settings['voice_profile']
     
     def save_config(self, path: Optional[str] = None):
         """Save current configuration to YAML file."""

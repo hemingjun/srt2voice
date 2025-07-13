@@ -1,0 +1,140 @@
+# 声音一致性优化配置
+# 本配置文件针对声音一致性进行了特殊优化
+# 复制此文件为 config/local.yaml 来使用这些设置
+
+services:
+  # GPT-SoVITS 本地TTS服务（针对一致性优化）
+  gpt_sovits:
+    service_name: gpt_sovits
+    priority: 1
+    enabled: true
+    
+    credentials:
+      api_url: "http://127.0.0.1:9880"
+      api_version: "v2"
+    
+    # 自动启动设置
+    auto_start:
+      enabled: true
+      gpt_sovits_path: "/Users/mingjun/Documents/Git Project/GPT-SoVITS"
+      startup_timeout: 30
+      use_command_script: false
+    
+    # 连接配置
+    connection:
+      host: "127.0.0.1"
+      port: 9880
+      timeout: 30
+      health_check_timeout: 5
+      max_retries: 3
+    
+    # 重试策略
+    retry_strategy:
+      initial_delay: 1.0
+      max_delay: 2.0
+      connection_retry_delay: 2.0
+    
+    # 运行时配置
+    runtime:
+      python_path: "runtime/bin/python3"
+      fallback_python: "python"
+      api_script_v1: "api.py"
+      api_script_v2: "api_v2.py"
+      config_file: "GPT_SoVITS/configs/tts_infer.yaml"
+      shutdown_wait: 0.5
+    
+    # 音频处理配置
+    audio:
+      silence_duration: 100
+    
+    voice_settings:
+      # 基础设置
+      language: "auto"
+      
+      # 参考音频配置（直接包含，不使用voice_profile）
+      ref_audio_path: "/Users/mingjun/Documents/Claude Project/srt2speech/config/reference_audio/reference_8s.wav"
+      prompt_text: "爱尔兰是全球顶级的高尔夫圣地，这里有超过400个球场，凯特琳城堡球"
+      prompt_lang: "zh"
+      
+      # 一致性优化参数（关键设置）
+      # 这些参数经过优化，可确保整个文件中声音保持一致
+      
+      # 采样参数 - 降低随机性
+      top_k: 2  # 极低值，最大程度保证稳定性
+      top_p: 0.5  # 中低值，减少变化
+      temperature: 0.2  # 极低温度，声音更加一致
+      
+      # 固定种子 - 确保每个片段使用相同的生成模式
+      seed: 2024  # 固定种子值（可以是任意正整数）
+      
+      # 生成控制
+      speed_factor: 1.0  # 保持稳定语速
+      text_split_method: "cut5"  # 使用最细粒度的分割
+      batch_size: 4  # 增加批处理大小，提高片段间一致性
+      batch_threshold: 0.9  # 提高批处理阈值
+      split_bucket: true
+      
+      # 音频设置
+      media_type: "wav"
+      streaming_mode: false
+      fragment_interval: 0.3
+      
+      # 推理参数
+      parallel_infer: true
+      repetition_penalty: 1.2  # 稍微降低，增加自然度
+      
+      # V3版本参数
+      sample_steps: 32
+      super_sampling: false
+
+  # Gemini TTS（备选）
+  gemini:
+    service_name: gemini
+    priority: 2
+    enabled: true
+    
+    credentials:
+      api_key: ""  # 通过环境变量设置
+    
+    voice_settings:
+      model: "gemini-2.5-pro-preview-tts"
+      voice_name: "Kore"  # 固定使用同一个声音
+      language: "auto"
+
+# 输出设置
+output:
+  format: 'wav'
+  sample_rate: 32000
+  channels: 1
+
+# 音频处理设置
+audio_processing:
+  normalize: true
+  remove_silence: false
+  crossfade_duration: 0.02  # 稍微增加过渡时间
+  # 音频重叠处理
+  overlap_handling: 'speed_adjust'
+  speed_adjust_limit: 1.3  # 降低最大调速限制，保持自然度
+  fade_duration: 0.05
+
+# 缓存设置
+cache:
+  enabled: true
+  directory: 'cache'
+  max_size_mb: 2000  # 增加缓存大小
+
+# 日志设置
+logging:
+  level: 'INFO'
+  format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+  file: null
+
+# 使用说明：
+# 1. 本配置专门针对声音一致性进行了优化
+# 2. 关键参数说明：
+#    - seed: 固定种子确保每次生成的一致性
+#    - temperature: 极低值(0.2)大幅降低随机性
+#    - top_k/top_p: 低值限制候选范围
+#    - batch_size: 增大以提高片段间关联性
+# 3. 如果仍有轻微变化，可进一步降低temperature至0.1
+# 4. 建议配合高质量的参考音频使用

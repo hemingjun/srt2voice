@@ -1,4 +1,4 @@
-"""音频处理器改进版本 - 使用 speed_factor 而不是后处理"""
+"""音频处理器"""
 import logging
 from pathlib import Path
 from typing import List, Tuple, Dict, Optional
@@ -48,9 +48,35 @@ class AudioProcessor:
         # 从配置中获取音频处理设置
         self.config = config or {}
         self.overlap_handling = self.config.get('overlap_handling', 'speed_adjust')
-        self.speed_adjust_limit = self.config.get('speed_adjust_limit', 2.0)  # 提高到 2.0
+        self.speed_adjust_limit = self.config.get('speed_adjust_limit', 1.5)
         self.fade_duration = self.config.get('fade_duration', 0.0)  # 默认关闭淡出效果
-        self.max_total_speed = self.config.get('max_total_speed', 4.0)  # 最大总体加速倍数
+    
+    def add_audio_segment(self, start_time: float, audio: AudioSegment, 
+                         end_time: Optional[float] = None, 
+                         next_start_time: Optional[float] = None) -> None:
+        """添加音频片段，可选进行重叠检测和处理
+        
+        Args:
+            start_time: 开始时间（秒）
+            audio: 音频片段
+            end_time: 字幕结束时间（秒），用于重叠检测
+            next_start_time: 下一个字幕开始时间（秒），用于重叠检测
+        """
+        # 如果提供了时间信息，进行重叠检测
+        if end_time is not None:
+            audio_duration = len(audio) / 1000.0
+            available_duration = end_time - start_time
+            
+            if next_start_time is not None:
+                max_duration = next_start_time - start_time
+                available_duration = min(available_duration, max_duration)
+            
+            # 处理重叠
+            if audio_duration > available_duration:
+                audio = self._handle_overlap(audio, audio_duration, available_duration)
+        
+        self.audio_segments.append((start_time, audio))
+        logger.debug(f"Added audio segment at {start_time}s")
     
     def process_subtitles(self, subtitles: List[dict], tts_service) -> AudioSegment:
         """处理字幕并生成完整音频，包含重叠检测和处理
@@ -66,16 +92,20 @@ class AudioProcessor:
         self.audio_segments = []
         self.overlap_stats = OverlapStatistics()
         
-        # 保存原始 speed_factor (如果 TTS 服务支持)
-        original_speed_factor = None
-        if hasattr(tts_service, 'voice_settings') and 'speed_factor' in tts_service.voice_settings:
-            original_speed_factor = tts_service.voice_settings.get('speed_factor', 1.0)
-        
         # 转换每个字幕为音频
         for i, subtitle in enumerate(subtitles):
             start_time = self._timedelta_to_seconds(subtitle['start'])
             end_time = self._timedelta_to_seconds(subtitle['end'])
             text = subtitle['content']
+            
+            # 生成音频（第一个片段作为参考）
+            if hasattr(tts_service, '_first_segment_path'):
+                # GPT-SoVITS 服务，第一个片段需要保存为参考
+                audio = tts_service.text_to_speech(text, save_as_reference=(i == 0))
+            else:
+                # 其他 TTS 服务
+                audio = tts_service.text_to_speech(text)
+            audio_duration = len(audio) / 1000.0  # 转换为秒
             
             # 计算可用时间窗口
             available_duration = end_time - start_time
@@ -86,143 +116,55 @@ class AudioProcessor:
                 max_duration = next_start - start_time
                 available_duration = min(available_duration, max_duration)
             
-            # 预估文本长度和可能的音频时长
-            # 中文大约4-5个字/秒，即每字0.2-0.25秒
-            # 英文大约2-3个词/秒
-            char_count = len(text)
-            estimated_duration = char_count * 0.18  # 更准确的估计：每字0.18秒（5-6字/秒）
-            
-            # 计算所需的总体加速倍数
-            speed_adjustment_needed = estimated_duration / available_duration if available_duration > 0 else 1.0
-            
-            # 实施双层加速策略
-            tts_speed_factor = 1.0
-            post_process_speed = 1.0
-            speed_factor_adjusted = False
-            
-            if speed_adjustment_needed > 1.0 and hasattr(tts_service, 'voice_settings'):
-                if speed_adjustment_needed <= 2.0:
-                    # 仅使用 GPT-SoVITS speed_factor
-                    tts_speed_factor = speed_adjustment_needed
-                elif speed_adjustment_needed <= self.max_total_speed:
-                    # 双层策略：GPT-SoVITS 2.0 + 后处理补充
-                    tts_speed_factor = 2.0
-                    post_process_speed = speed_adjustment_needed / 2.0
-                else:
-                    # 超出最大限制，尽力加速
-                    tts_speed_factor = 2.0
-                    post_process_speed = self.max_total_speed / 2.0
-                    logger.warning(
-                        f"字幕 {subtitle.get('index', i+1)}: "
-                        f"需要 {speed_adjustment_needed:.2f}x 加速，"
-                        f"超出最大限制 {self.max_total_speed}x"
-                    )
-                
-                # 设置 GPT-SoVITS speed_factor
-                if 'speed_factor' in tts_service.voice_settings and tts_speed_factor > 1.0:
-                    current_speed = original_speed_factor or 1.0
-                    new_speed = max(0.5, min(2.0, current_speed * tts_speed_factor))
-                    tts_service.voice_settings['speed_factor'] = new_speed
-                    speed_factor_adjusted = True
-                    
-                    logger.info(
-                        f"字幕 {subtitle.get('index', i+1)}: "
-                        f"文本长度={char_count}字, "
-                        f"需要总加速={speed_adjustment_needed:.2f}x, "
-                        f"GPT-SoVITS语速={new_speed:.2f}x, "
-                        f"后处理加速={post_process_speed:.2f}x"
-                    )
-            
-            # 生成音频（第一个片段作为参考）
-            try:
-                if hasattr(tts_service, '_first_segment_path'):
-                    # GPT-SoVITS 服务，第一个片段需要保存为参考
-                    audio = tts_service.text_to_speech(text, save_as_reference=(i == 0))
-                else:
-                    # 其他 TTS 服务
-                    audio = tts_service.text_to_speech(text)
-            finally:
-                # 恢复原始 speed_factor
-                if speed_factor_adjusted and hasattr(tts_service, 'voice_settings'):
-                    tts_service.voice_settings['speed_factor'] = original_speed_factor
-            
-            audio_duration = len(audio) / 1000.0  # 转换为秒
-            
-            # 详细日志：显示实际生成的音频时长
-            logger.debug(
-                f"字幕 {subtitle.get('index', i+1)}: "
-                f"实际音频时长={audio_duration:.2f}s, "
-                f"可用时长={available_duration:.2f}s, "
-                f"差异={(audio_duration - available_duration):.2f}s"
-            )
-            
-            # 应用音频后处理加速（如果需要）
-            if post_process_speed > 1.0:
-                original_duration = audio_duration
-                audio = self._adjust_audio_speed(audio, post_process_speed)
-                audio_duration = len(audio) / 1000.0
-                logger.info(
-                    f"字幕 {subtitle.get('index', i+1)}: "
-                    f"后处理加速 {post_process_speed:.2f}x, "
-                    f"时长 {original_duration:.2f}s -> {audio_duration:.2f}s"
-                )
-            
-            # 处理音频重叠（如果生成后仍然超长）
+            # 处理音频重叠
             if audio_duration > available_duration:
                 self.overlap_stats.total_overlaps += 1
                 overlap_duration = audio_duration - available_duration
                 
                 logger.warning(
-                    f"音频仍然超长 - 字幕 {subtitle.get('index', i+1)}: "
-                    f"音频={audio_duration:.2f}s, 可用={available_duration:.2f}s, "
-                    f"超出={overlap_duration:.2f}s"
+                    f"Audio overlap detected at subtitle {subtitle.get('index', i+1)}: "
+                    f"audio={audio_duration:.2f}s, available={available_duration:.2f}s, "
+                    f"overlap={overlap_duration:.2f}s"
                 )
                 
-                # 如果超出太多，则截断
-                if overlap_duration > available_duration * 0.3:  # 超出30%以上
+                if self.overlap_handling == 'speed_adjust':
+                    # 计算需要的速度因子
+                    speed_factor = audio_duration / available_duration
+                    
+                    if speed_factor <= self.speed_adjust_limit:
+                        # 调整速度
+                        audio = self._adjust_audio_speed(audio, speed_factor)
+                        self.overlap_stats.speed_adjusted += 1
+                        self.overlap_stats.max_speed_factor = max(
+                            self.overlap_stats.max_speed_factor, speed_factor
+                        )
+                        self.overlap_stats.total_time_adjusted += overlap_duration
+                        logger.info(f"Applied speed adjustment: {speed_factor:.2f}x")
+                    else:
+                        # 速度调整超出限制，改为截断
+                        audio = self._truncate_with_fade(
+                            audio, int(available_duration * 1000)
+                        )
+                        self.overlap_stats.truncated += 1
+                        logger.warning(
+                            f"Speed factor {speed_factor:.2f}x exceeds limit, truncating audio"
+                        )
+                
+                elif self.overlap_handling == 'truncate':
+                    # 直接截断
                     audio = self._truncate_with_fade(
                         audio, int(available_duration * 1000)
                     )
                     self.overlap_stats.truncated += 1
-                    logger.info(f"截断过长音频: {audio_duration:.2f}s -> {available_duration:.2f}s")
-                else:
-                    # 小幅超出，仅警告
-                    self.overlap_stats.warned_only += 1
                 
-            # 记录速度调整统计
-            if speed_factor_adjusted or post_process_speed > 1.0:
-                self.overlap_stats.speed_adjusted += 1
-                total_speed = (tts_service.voice_settings.get('speed_factor', 1.0) if speed_factor_adjusted else 1.0) * post_process_speed
-                self.overlap_stats.max_speed_factor = max(
-                    self.overlap_stats.max_speed_factor, 
-                    total_speed
-                )
-                if audio_duration > available_duration:
-                    overlap_duration = audio_duration - available_duration
-                    self.overlap_stats.total_time_adjusted += overlap_duration
+                else:  # 'warn_only'
+                    # 仅警告，不做处理
+                    self.overlap_stats.warned_only += 1
             
             self.add_audio_segment(start_time, audio)
         
-        # 恢复原始 speed_factor
-        if original_speed_factor is not None and hasattr(tts_service, 'voice_settings'):
-            tts_service.voice_settings['speed_factor'] = original_speed_factor
-        
         # 拼接音频
         return self._concatenate_audio()
-    
-    def add_audio_segment(self, start_time: float, audio: AudioSegment, 
-                         end_time: Optional[float] = None, 
-                         next_start_time: Optional[float] = None) -> None:
-        """添加音频片段
-        
-        Args:
-            start_time: 开始时间（秒）
-            audio: 音频片段
-            end_time: 字幕结束时间（秒），用于重叠检测
-            next_start_time: 下一个字幕开始时间（秒），用于重叠检测
-        """
-        self.audio_segments.append((start_time, audio))
-        logger.debug(f"Added audio segment at {start_time}s")
     
     def _timedelta_to_seconds(self, td: timedelta) -> float:
         """将timedelta转换为秒数
@@ -356,12 +298,63 @@ class AudioProcessor:
         # 截断到最大时长
         truncated = audio[:max_duration_ms]
         
-        # 添加淡出效果（如果配置了）
+        # 添加淡出效果
         fade_duration_ms = int(self.fade_duration * 1000)
         if fade_duration_ms > 0 and len(truncated) > fade_duration_ms:
             truncated = truncated.fade_out(fade_duration_ms)
         
         return truncated
+    
+    def _handle_overlap(self, audio: AudioSegment, audio_duration: float, 
+                       available_duration: float) -> AudioSegment:
+        """处理音频重叠
+        
+        Args:
+            audio: 原始音频
+            audio_duration: 音频时长（秒）
+            available_duration: 可用时长（秒）
+            
+        Returns:
+            AudioSegment: 处理后的音频
+        """
+        self.overlap_stats.total_overlaps += 1
+        overlap_duration = audio_duration - available_duration
+        
+        logger.warning(
+            f"Audio overlap detected: audio={audio_duration:.2f}s, "
+            f"available={available_duration:.2f}s, overlap={overlap_duration:.2f}s"
+        )
+        
+        if self.overlap_handling == 'speed_adjust':
+            speed_factor = audio_duration / available_duration
+            
+            if speed_factor <= self.speed_adjust_limit:
+                audio = self._adjust_audio_speed(audio, speed_factor)
+                self.overlap_stats.speed_adjusted += 1
+                self.overlap_stats.max_speed_factor = max(
+                    self.overlap_stats.max_speed_factor, speed_factor
+                )
+                self.overlap_stats.total_time_adjusted += overlap_duration
+                logger.info(f"Applied speed adjustment: {speed_factor:.2f}x")
+            else:
+                audio = self._truncate_with_fade(
+                    audio, int(available_duration * 1000)
+                )
+                self.overlap_stats.truncated += 1
+                logger.warning(
+                    f"Speed factor {speed_factor:.2f}x exceeds limit, truncating audio"
+                )
+        
+        elif self.overlap_handling == 'truncate':
+            audio = self._truncate_with_fade(
+                audio, int(available_duration * 1000)
+            )
+            self.overlap_stats.truncated += 1
+        
+        else:  # 'warn_only'
+            self.overlap_stats.warned_only += 1
+        
+        return audio
     
     def get_overlap_statistics(self) -> Dict[str, any]:
         """获取音频重叠处理统计信息

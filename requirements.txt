@@ -11,6 +11,10 @@ google-genai>=1.0.0
 # Progress display
 rich==13.7.0
 
+# Audio processing
+librosa==0.10.1
+numpy>=1.21.0,<2.0.0  # Required by librosa
+
 # Utilities
 pydantic==2.5.3
 python-dotenv==1.0.0

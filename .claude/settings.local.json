@@ -5,10 +5,6 @@
       "Bash(git commit:*)",
       "Bash(touch:*)",
       "Bash(cd:*)",
-      "Bash(cd:*)",
-      "Bash(cd:*)",
-      "Bash(cd:*)",
-      "Bash(cd:*)",
       "WebFetch(domain:blog.csdn.net)",
       "WebFetch(domain:www.volcengine.com)",
       "WebFetch(domain:github.com)",
@@ -16,11 +12,9 @@
       "Bash(python tests/test_config_voice_profile.py)",
       "Bash(python tests:*)",
       "Bash(git push:*)",
-      "Bash(cd:*)",
-      "Bash(cd:*)",
       "Bash(pip install:*)",
-      "Bash(cd:*)",
-      "WebFetch(domain:colab.research.google.com)"
+      "WebFetch(domain:colab.research.google.com)",
+      "Bash(python:*)"
     ],
     "deny": []
   }

@@ -9,6 +9,9 @@ from pydub import AudioSegment
 from rich.console import Console
 from .base import TTSService
 from ..utils.gpt_sovits_manager import GPTSoVITSManager
+from ..utils.session import get_current_session
+from ..emotion.controller import EmotionController
+import os
 
 
 logger = logging.getLogger('srt2speech.gptsovits')
@@ -48,7 +51,8 @@ class GPTSoVITSService(TTSService):
         # 先初始化必要的属性，供validate_config使用
         self.api_url = config['credentials']['api_url']
         self.api_version = config['credentials'].get('api_version', 'v2')
-        self.voice_settings = config['voice_settings']
+        self.voice_settings = config['voice_settings'].copy()  # 复制以避免修改原配置
+        self.original_voice_settings = config['voice_settings'].copy()  # 保存原始设置
         
         # 从配置中读取连接参数
         connection_config = config.get('connection', {})
@@ -68,6 +72,10 @@ class GPTSoVITSService(TTSService):
         
         # 标记服务是否被手动停止
         self._manually_stopped = False
+        
+        # 用于存储第一个片段作为参考音频
+        self._first_segment_path = None
+        self._temp_audio_counter = 0
         
         # 添加调试日志
         logger.debug(f"Creating GPTSoVITSService instance: {id(self)}")
@@ -149,11 +157,12 @@ class GPTSoVITSService(TTSService):
             logger.debug(f"GPT-SoVITS服务健康检查失败：{e}")
             return False
     
-    def text_to_speech(self, text: str) -> AudioSegment:
+    def text_to_speech(self, text: str, emotion: Optional[str] = None, save_as_reference: bool = False) -> AudioSegment:
         """将文本转换为语音
         
         Args:
             text: 要转换的文本
+            emotion: 可选的情感参数
             
         Returns:
             AudioSegment: 音频片段
@@ -162,11 +171,36 @@ class GPTSoVITSService(TTSService):
             # 返回静音片段
             return AudioSegment.silent(duration=self.silence_duration)
         
-        # 根据API版本选择不同的请求方式
-        if self.api_version == 'v2':
-            return self._tts_v2(text)
-        else:
-            return self._tts_v1(text)
+        # 如果指定了情感，应用情感参数
+        if emotion:
+            self._apply_emotion(emotion)
+        
+        try:
+            # 根据API版本选择不同的请求方式
+            if self.api_version == 'v2':
+                audio = self._tts_v2(text)
+            else:
+                audio = self._tts_v1(text)
+            
+            # 如果需要保存为参考音频（第一个片段）
+            if save_as_reference and self._first_segment_path is None:
+                import tempfile
+                import os
+                # 创建临时文件保存第一个片段
+                fd, temp_path = tempfile.mkstemp(suffix='.wav', prefix='ref_segment_')
+                os.close(fd)
+                audio.export(temp_path, format='wav')
+                self._first_segment_path = temp_path
+                logger.info(f"保存第一个片段作为参考音频: {temp_path}")
+                logger.debug(f"第一个片段文本: {text[:50]}...")
+            elif save_as_reference and self._first_segment_path:
+                logger.debug(f"已存在参考音频，跳过保存: {self._first_segment_path}")
+            
+            return audio
+        finally:
+            # 恢复原始设置（如果应用了情感）
+            if emotion:
+                self._restore_voice_settings()
     
     def _tts_v1(self, text: str) -> AudioSegment:
         """使用API v1进行TTS"""
@@ -198,6 +232,21 @@ class GPTSoVITSService(TTSService):
             "prompt_lang": self.voice_settings['prompt_lang']
         }
         
+        # 如果有第一个片段的参考音频，添加到辅助参考音频路径
+        if self._first_segment_path and os.path.exists(self._first_segment_path):
+            # 确保 aux_ref_audio_paths 是列表
+            aux_paths = self.voice_settings.get('aux_ref_audio_paths', [])
+            if isinstance(aux_paths, str):
+                aux_paths = [aux_paths] if aux_paths else []
+            elif not isinstance(aux_paths, list):
+                aux_paths = []
+            
+            # 添加第一个片段作为辅助参考（如果还没有添加）
+            if self._first_segment_path not in aux_paths:
+                aux_paths = [self._first_segment_path] + aux_paths
+                data['aux_ref_audio_paths'] = aux_paths
+                logger.debug(f"使用第一个片段作为辅助参考音频")
+        
         # 添加所有其他配置的参数
         v2_params = [
             'aux_ref_audio_paths', 'top_k', 'top_p', 'temperature',
@@ -208,8 +257,25 @@ class GPTSoVITSService(TTSService):
         ]
         
         for param in v2_params:
-            if param in self.voice_settings:
+            if param in self.voice_settings and param != 'aux_ref_audio_paths':  # 避免覆盖已设置的aux_ref_audio_paths
                 data[param] = self.voice_settings[param]
+        
+        # 使用会话种子覆盖配置种子（如果有会话）
+        session = get_current_session()
+        if session and 'seed' in data:
+            session_seed = session.get_session_seed(data.get('seed', -1))
+            data['seed'] = session_seed
+            logger.debug(f"使用会话种子: {session_seed}")
+        
+        # 调试日志：记录完整的API请求参数
+        logger.debug(f"GPT-SoVITS v2 API request parameters:")
+        logger.debug(f"  URL: {url}")
+        logger.debug(f"  Text: {data.get('text', '')[:50]}...")  # 只显示前50个字符
+        logger.debug(f"  Speed factor: {data.get('speed_factor', 'not set')}")
+        logger.debug(f"  Aux ref audio paths: {data.get('aux_ref_audio_paths', [])}")
+        logger.debug(f"  Temperature: {data.get('temperature', 'not set')}")
+        logger.debug(f"  Top_k: {data.get('top_k', 'not set')}")
+        logger.debug(f"  Seed: {data.get('seed', 'not set')}")
         
         return self._make_request('POST', url, json=data)
     
@@ -338,6 +404,14 @@ class GPTSoVITSService(TTSService):
         
         self._manually_stopped = True
         
+        # 清理临时参考音频文件
+        if self._first_segment_path and os.path.exists(self._first_segment_path):
+            try:
+                os.remove(self._first_segment_path)
+                logger.debug(f"已删除临时参考音频: {self._first_segment_path}")
+            except Exception as e:
+                logger.warning(f"删除临时参考音频失败: {e}")
+        
         if self.service_manager:
             try:
                 self.service_manager.stop_service()
@@ -348,3 +422,24 @@ class GPTSoVITSService(TTSService):
         # 从活动服务集合中移除
         _active_services.discard(self)
         logger.debug(f"Removed instance {id(self)} from _active_services, remaining: {len(_active_services)}")
+    
+    def _apply_emotion(self, emotion: str) -> None:
+        """应用情感参数
+        
+        Args:
+            emotion: 情感类型
+        """
+        # 获取情感参数
+        from ..emotion.presets import GPTSOVITS_EMOTION_PRESETS
+        
+        if emotion in GPTSOVITS_EMOTION_PRESETS:
+            emotion_params = GPTSOVITS_EMOTION_PRESETS[emotion]['parameters']
+            # 更新voice_settings
+            self.voice_settings.update(emotion_params)
+            logger.debug(f"应用情感 '{emotion}' 参数: {emotion_params}")
+        else:
+            logger.warning(f"未知的情感类型: {emotion}")
+    
+    def _restore_voice_settings(self) -> None:
+        """恢复原始语音设置"""
+        self.voice_settings = self.original_voice_settings.copy()

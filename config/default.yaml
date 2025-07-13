@@ -64,9 +64,10 @@ services:
       # 然后通过修改 voice_profile 来切换不同的声音
       
       # 采样参数（可选，影响生成质量）
-      top_k: 5  # Top-K采样，范围1-20，越小越稳定
-      top_p: 1  # Top-P采样，范围0-1
-      temperature: 1  # 温度参数，范围0-2，越低越稳定
+      # 以下参数已优化以确保声音一致性
+      top_k: 2  # Top-K采样，范围1-20，极低值确保最大稳定性
+      top_p: 0.5  # Top-P采样，范围0-1，中低值减少变化
+      temperature: 0.2  # 温度参数，范围0-2，极低温度确保声音一致
       
       # 生成控制（可选）
       speed_factor: 1.0  # 语速，范围0.5-2.0
@@ -81,9 +82,9 @@ services:
       fragment_interval: 0.3  # 片段间隔（秒）
       
       # 高级参数（可选）
-      seed: -1  # 随机种子，-1表示随机
+      seed: 2024  # 随机种子，固定值确保声音一致性（使用固定种子非常重要）
       parallel_infer: true  # 并行推理
-      repetition_penalty: 1.35  # 重复惩罚
+      repetition_penalty: 1.2  # 重复惩罚，稍微降低增加自然度
       
       # V3版本专用参数（可选）
       sample_steps: 32  # 采样步数（仅V3版本）
@@ -138,6 +139,11 @@ audio_processing:
   normalize: true
   remove_silence: false
   crossfade_duration: 0.01
+  # 音频重叠处理策略
+  overlap_handling: 'speed_adjust'  # 可选：'speed_adjust'（调速）、'truncate'（截断）、'warn_only'（仅警告）
+  speed_adjust_limit: 2.0  # GPT-SoVITS 最大语速调整倍数
+  max_total_speed: 4.0  # 总体最大加速倍数（GPT-SoVITS + 后处理）
+  fade_duration: 0.05  # 截断时的淡出时长（秒）
 
 # 缓存设置
 cache:

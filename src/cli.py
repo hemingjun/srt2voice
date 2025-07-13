@@ -7,8 +7,10 @@ from rich.table import Table
 from .config import ConfigManager
 from .parser.srt import SRTParser
 from .utils.logger import setup_logger
+from .utils.session import create_session, get_current_session
 from .tts import TTS_SERVICES
 from .audio import AudioProcessor
+from .cache.manager import init_cache
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeRemainingColumn
 
 console = Console()
@@ -29,8 +31,12 @@ console = Console()
               help='Enable debug mode with verbose logging')
 @click.option('--list-services', is_flag=True,
               help='List available TTS services and exit')
+@click.option('--emotion', default=None,
+              help='Default emotion for all subtitles (neutral, emphasis, friendly, professional)')
+@click.option('--emotion-file', 'emotion_file_path',
+              help='Path to emotion sequence file (YAML format)')
 @click.version_option(version='0.1.0', prog_name='srt2speech')
-def main(input_file, output_file, config_path, service_name, preview, debug, list_services):
+def main(input_file, output_file, config_path, service_name, preview, debug, list_services, emotion, emotion_file_path):
     """Convert SRT subtitle files to speech audio using TTS services.
     
     Example:
@@ -46,6 +52,12 @@ def main(input_file, output_file, config_path, service_name, preview, debug, lis
         # Setup logging
         log_level = 'DEBUG' if debug else config_manager.config.logging['level']
         logger = setup_logger('srt2speech', log_level)
+        
+        # Create session for consistent voice generation
+        session = create_session()
+        
+        # Initialize cache
+        cache_manager = init_cache(config_manager.config.cache)
         
         # List services and exit if requested
         if list_services:
@@ -108,6 +120,9 @@ def main(input_file, output_file, config_path, service_name, preview, debug, lis
         console.print(f"  Total duration: {stats['total_duration']:.1f} seconds")
         console.print(f"  Total characters: {stats['total_characters']}")
         
+        # Update session statistics
+        session.update_stats('total_subtitles', stats['count'])
+        
         # Validate entries
         warnings = parser.validate_entries(entries)
         if warnings:
@@ -121,7 +136,7 @@ def main(input_file, output_file, config_path, service_name, preview, debug, lis
             console.print(f"\n[yellow]Preview mode:[/yellow] Processing first {len(entries)} subtitles")
         
         # Process with TTS
-        process_srt(entries, output_path, config_manager, service_name, logger)
+        audio_stats = process_srt(entries, output_path, config_manager, service_name, logger)
         
         # Display sample entries
         if entries:
@@ -139,6 +154,19 @@ def main(input_file, output_file, config_path, service_name, preview, debug, lis
                 )
             
             console.print(table)
+        
+        # Display session summary
+        if session:
+            session.print_summary(console)
+        
+        # Display cache statistics
+        if cache_manager:
+            cache_stats = cache_manager.get_statistics()
+            if cache_stats['hits'] + cache_stats['misses'] > 0:
+                console.print("\n[bold cyan]缓存统计:[/bold cyan]")
+                console.print(f"  命中率: {cache_stats['hit_rate']}% ({cache_stats['hits']}/{cache_stats['hits'] + cache_stats['misses']})")
+                console.print(f"  缓存大小: {cache_stats.get('total_size_mb', 0)}MB / {cache_stats.get('max_size_mb', 0)}MB")
+                console.print(f"  缓存项数: {cache_stats.get('total_entries', 0)}")
         
     except KeyboardInterrupt:
         console.print("\n[yellow]⚠️  正在停止任务处理...[/yellow]")
@@ -199,8 +227,11 @@ def process_srt(entries, output_path, config_manager, service_name, logger):
     
     console.print(f"\n[cyan]Using TTS service:[/cyan] {actual_service_name}")
     
-    # Initialize audio processor
-    audio_processor = AudioProcessor(output_format=output_path.suffix[1:])
+    # Initialize audio processor with config
+    audio_processor = AudioProcessor(
+        output_format=output_path.suffix[1:],
+        config=config_manager.config.audio_processing
+    )
     
     # Process each subtitle with progress bar
     with Progress(
@@ -215,13 +246,23 @@ def process_srt(entries, output_path, config_manager, service_name, logger):
         
         for i, entry in enumerate(entries):
             try:
-                # Generate audio for this subtitle
-                audio = tts_service.text_to_speech(entry.content)
+                # Generate audio for this subtitle (with cache support)
+                audio = tts_service.text_to_speech_with_cache(entry.content)
                 
-                # Add to processor
+                # Calculate timing for overlap detection
+                start_time = entry.start_time.total_seconds()
+                end_time = entry.end_time.total_seconds()
+                next_start_time = None
+                
+                if i < len(entries) - 1:
+                    next_start_time = entries[i + 1].start_time.total_seconds()
+                
+                # Add to processor with timing info for overlap detection
                 audio_processor.add_audio_segment(
-                    entry.start_time.total_seconds(),
-                    audio
+                    start_time,
+                    audio,
+                    end_time=end_time,
+                    next_start_time=next_start_time
                 )
                 
                 progress.update(task, advance=1, description=f"Processing: {entry.content[:30]}...")
@@ -237,6 +278,40 @@ def process_srt(entries, output_path, config_manager, service_name, logger):
         final_audio = audio_processor._concatenate_audio()
         audio_processor.save_audio(final_audio, output_path)
         console.print(f"\n[green]✓ Success![/green] Audio saved to: {output_path}")
+        
+        # Display overlap statistics if any overlaps were detected
+        overlap_stats = audio_processor.get_overlap_statistics()
+        if overlap_stats['total_overlaps'] > 0:
+            console.print("\n[yellow]⚠️  Audio Overlap Statistics:[/yellow]")
+            console.print(f"  • Total overlaps detected: {overlap_stats['total_overlaps']}")
+            
+            if overlap_stats['speed_adjusted'] > 0:
+                console.print(f"  • Speed adjusted: {overlap_stats['speed_adjusted']} (max speed: {overlap_stats['max_speed_factor']}x)")
+            
+            if overlap_stats['truncated'] > 0:
+                console.print(f"  • Truncated with fade: {overlap_stats['truncated']}")
+            
+            if overlap_stats['warned_only'] > 0:
+                console.print(f"  • Warned only (no adjustment): {overlap_stats['warned_only']}")
+            
+            if overlap_stats['total_time_adjusted'] > 0:
+                console.print(f"  • Total time adjusted: {overlap_stats['total_time_adjusted']:.1f} seconds")
+            
+            # Show current handling strategy
+            overlap_handling = config_manager.config.audio_processing.get('overlap_handling', 'speed_adjust')
+            console.print(f"\n  Current strategy: [cyan]{overlap_handling}[/cyan]")
+            console.print("  (Change in config/default.yaml → audio_processing.overlap_handling)")
+            
+        # Update session statistics
+        session = get_current_session()
+        if session:
+            session.update_stats('processed_subtitles', len(entries))
+            session.update_stats('audio_adjustments', overlap_stats['total_overlaps'])
+            if overlap_stats['speed_adjusted'] > 0:
+                session.update_stats('speed_adjustments', overlap_stats['max_speed_factor'])
+            
+        return overlap_stats
+            
     except Exception as e:
         console.print(f"[red]Error saving audio:[/red] {str(e)}")
         sys.exit(1)
