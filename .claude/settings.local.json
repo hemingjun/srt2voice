@@ -14,7 +14,9 @@
       "Bash(git push:*)",
       "Bash(pip install:*)",
       "WebFetch(domain:colab.research.google.com)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(echo $PATH)",
+      "Bash(ls:*)"
     ],
     "deny": []
   }

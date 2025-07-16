@@ -1,197 +1,151 @@
-"""音频时长检测和调整模块"""
+"""音频时长估算模块"""
+import re
 import logging
-from typing import Tuple, Optional
-from pydub import AudioSegment
-from datetime import timedelta
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 
-class AudioTimingManager:
-    """音频时长管理器，处理音频重叠和时长调整"""
+class TimingController:
+    """时长估算器，负责文本时长预估算和标点优化"""
     
-    def __init__(self, overlap_handling: str = 'speed_adjust', 
-                 speed_adjust_limit: float = 1.5,
-                 fade_duration: float = 0.05):
-        """初始化时长管理器
+    # 不同字符类型的预估时长（秒/字符）
+    # 基于GPT-SoVITS实际测试优化
+    # 测试数据：使用reference_8s.wav，7个中文字符约1.78秒 = 0.254秒/字
+    CHAR_DURATIONS = {
+        'chinese': 0.25,      # 中文字符（基于实测调整）
+        'english': 0.08,      # 英文字符（按字母算）
+        'number': 0.20,       # 数字
+        'punctuation': 0.10,  # 标点符号
+        'space': 0.05,        # 空格
+        'default': 0.20       # 默认值
+    }
+    
+    # 标点优化级别（按停顿时长排序）
+    # 级别1：删除长停顿标点（影响最大）
+    LEVEL1_REMOVE = ['——', '—', '……', '…', '～～', '～']
+    
+    # 级别2：删除中等停顿标点
+    LEVEL2_REMOVE = LEVEL1_REMOVE + ['、', '；', ';', '：', ':', '·']
+    
+    # 级别3：删除短停顿标点（保留句末标点）
+    LEVEL3_REMOVE = LEVEL2_REMOVE + ['，', ',']
+    
+    def __init__(self, config: Optional[dict] = None):
+        """初始化时长估算器
         
         Args:
-            overlap_handling: 重叠处理策略 ('speed_adjust', 'truncate', 'warn_only')
-            speed_adjust_limit: 最大调速倍数
-            fade_duration: 淡入淡出时长（秒）
+            config: 配置字典
         """
-        self.overlap_handling = overlap_handling
-        self.speed_adjust_limit = speed_adjust_limit
-        self.fade_duration_ms = int(fade_duration * 1000)
-        self.stats = {
-            'overlaps_detected': 0,
-            'speed_adjustments': [],
-            'truncations': 0
-        }
+        self.config = config or {}
     
-    def check_and_adjust_audio(self, 
-                              audio: AudioSegment,
-                              start_time: float,
-                              end_time: float,
-                              subtitle_index: int,
-                              subtitle_text: str) -> Tuple[AudioSegment, Optional[str]]:
-        """检查并调整音频以适应时间窗口
+    def estimate_duration(self, text: str) -> float:
+        """精确估算文本的语音时长
         
         Args:
-            audio: 原始音频片段
-            start_time: 开始时间（秒）
-            end_time: 结束时间（秒）
-            subtitle_index: 字幕索引（用于日志）
-            subtitle_text: 字幕文本（用于日志）
+            text: 输入文本
             
         Returns:
-            Tuple[AudioSegment, Optional[str]]: 调整后的音频和警告信息
+            float: 预估时长（秒）
         """
-        # 计算可用时长和实际时长
-        available_duration = end_time - start_time
-        actual_duration = len(audio) / 1000.0  # 转换为秒
+        total_duration = 0.0
         
-        # 如果音频时长没有超过可用时间，直接返回
-        if actual_duration <= available_duration:
-            return audio, None
+        for char in text:
+            char_type = self._get_char_type(char)
+            duration = self.CHAR_DURATIONS.get(char_type, self.CHAR_DURATIONS['default'])
+            total_duration += duration
         
-        # 检测到重叠
-        self.stats['overlaps_detected'] += 1
-        overlap_duration = actual_duration - available_duration
-        overlap_percentage = (overlap_duration / actual_duration) * 100
+        # 考虑语速变化因素
+        # 长句子通常读得稍快
+        if len(text) > 50:
+            total_duration *= 0.95
+        elif len(text) > 30:
+            total_duration *= 0.98
         
-        warning_msg = (
-            f"字幕 #{subtitle_index}: 音频时长({actual_duration:.2f}s)超过可用时间"
-            f"({available_duration:.2f}s)，重叠{overlap_duration:.2f}s "
-            f"({overlap_percentage:.1f}%)"
-        )
+        # 包含数字或英文的混合文本通常更慢
+        if self._has_mixed_content(text):
+            total_duration *= 1.1
         
-        # 根据策略处理
-        if self.overlap_handling == 'warn_only':
-            # 仅警告，不做调整
-            logger.warning(f"{warning_msg} - 保持原样")
-            return audio, warning_msg
+        # 添加基础停顿时间（较短）
+        total_duration += 0.1
         
-        elif self.overlap_handling == 'speed_adjust':
-            # 计算需要的加速倍数
-            required_speed = actual_duration / available_duration
+        return total_duration
+    
+    def _get_char_type(self, char: str) -> str:
+        """判断字符类型
+        
+        Args:
+            char: 单个字符
             
-            if required_speed <= self.speed_adjust_limit:
-                # 在限制范围内，进行调速
-                adjusted_audio = self._adjust_speed(audio, required_speed)
-                self.stats['speed_adjustments'].append(required_speed)
+        Returns:
+            str: 字符类型
+        """
+        if '\u4e00' <= char <= '\u9fff':
+            return 'chinese'
+        elif char.isalpha():
+            return 'english'
+        elif char.isdigit():
+            return 'number'
+        elif char.isspace():
+            return 'space'
+        elif not char.isalnum():
+            return 'punctuation'
+        else:
+            return 'default'
+    
+    def _has_mixed_content(self, text: str) -> bool:
+        """检查是否包含混合内容（中英文混合、包含数字等）
+        
+        Args:
+            text: 输入文本
+            
+        Returns:
+            bool: 是否为混合内容
+        """
+        has_chinese = bool(re.search(r'[\u4e00-\u9fff]', text))
+        has_english = bool(re.search(r'[a-zA-Z]', text))
+        has_number = bool(re.search(r'\d', text))
+        
+        # 至少包含两种类型
+        return sum([has_chinese, has_english, has_number]) >= 2
+    
+    def optimize_punctuation(self, text: str, level: int) -> str:
+        """根据优化级别删减标点符号
+        
+        Args:
+            text: 输入文本
+            level: 优化级别 (1-3)
+                1: 删除破折号、省略号等长停顿标点
+                2: 删除顿号、分号、冒号等中等停顿标点
+                3: 删除逗号等短停顿标点
                 
-                adjust_msg = f"{warning_msg} - 已调速至{required_speed:.2f}x"
-                logger.info(adjust_msg)
-                return adjusted_audio, adjust_msg
-            else:
-                # 超过限制，使用最大调速并警告
-                adjusted_audio = self._adjust_speed(audio, self.speed_adjust_limit)
-                self.stats['speed_adjustments'].append(self.speed_adjust_limit)
-                
-                remaining_overlap = actual_duration / self.speed_adjust_limit - available_duration
-                adjust_msg = (
-                    f"{warning_msg} - 已调速至最大值{self.speed_adjust_limit}x，"
-                    f"仍有{remaining_overlap:.2f}s重叠"
-                )
-                logger.warning(adjust_msg)
-                return adjusted_audio, adjust_msg
-        
-        elif self.overlap_handling == 'truncate':
-            # 截断音频
-            truncated_audio = self._truncate_audio(audio, available_duration)
-            self.stats['truncations'] += 1
-            
-            truncate_msg = f"{warning_msg} - 已截断音频"
-            logger.info(truncate_msg)
-            return truncated_audio, truncate_msg
-        
-        else:
-            # 未知策略，返回原音频
-            logger.error(f"未知的重叠处理策略: {self.overlap_handling}")
-            return audio, warning_msg
-    
-    def _adjust_speed(self, audio: AudioSegment, speed_factor: float) -> AudioSegment:
-        """调整音频播放速度
-        
-        Args:
-            audio: 原始音频
-            speed_factor: 速度因子（>1表示加速）
-            
         Returns:
-            AudioSegment: 调速后的音频
+            str: 优化后的文本
         """
-        # 使用pydub的speedup方法，保持音调
-        # 注意：speedup只能加速，不能减速
-        if speed_factor > 1:
-            # 计算新的采样率来实现加速
-            new_sample_rate = int(audio.frame_rate * speed_factor)
-            # 改变采样率但保持帧数，实现加速效果
-            speed_audio = audio._spawn(audio.raw_data, overrides={
-                "frame_rate": new_sample_rate
-            })
-            # 重新采样回原始采样率
-            return speed_audio.set_frame_rate(audio.frame_rate)
-        else:
-            # 如果需要减速（speed_factor < 1），暂不支持
-            return audio
-    
-    def _truncate_audio(self, audio: AudioSegment, max_duration: float) -> AudioSegment:
-        """截断音频到指定时长，并添加淡出效果
-        
-        Args:
-            audio: 原始音频
-            max_duration: 最大时长（秒）
+        if level < 1 or level > 3:
+            return text
             
-        Returns:
-            AudioSegment: 截断后的音频
-        """
-        max_duration_ms = int(max_duration * 1000)
+        # 根据级别选择要删除的标点
+        if level == 1:
+            punctuations_to_remove = self.LEVEL1_REMOVE
+        elif level == 2:
+            punctuations_to_remove = self.LEVEL2_REMOVE
+        else:  # level == 3
+            punctuations_to_remove = self.LEVEL3_REMOVE
         
-        # 如果音频已经短于最大时长，直接返回
-        if len(audio) <= max_duration_ms:
-            return audio
+        # 删除指定的标点符号
+        optimized_text = text
+        for punct in punctuations_to_remove:
+            optimized_text = optimized_text.replace(punct, '')
         
-        # 截断到最大时长
-        truncated = audio[:max_duration_ms]
+        # 记录优化信息
+        if optimized_text != text:
+            logger.info(
+                f"标点优化级别{level}: "
+                f"原文长度={len(text)}, 优化后长度={len(optimized_text)}, "
+                f"删除字符数={len(text) - len(optimized_text)}"
+            )
+            logger.debug(f"原文: {text}")
+            logger.debug(f"优化: {optimized_text}")
         
-        # 添加淡出效果（如果有足够的时长）
-        if len(truncated) > self.fade_duration_ms:
-            truncated = truncated.fade_out(self.fade_duration_ms)
-        
-        return truncated
-    
-    def get_stats_summary(self) -> dict:
-        """获取统计摘要
-        
-        Returns:
-            dict: 统计信息
-        """
-        summary = {
-            'overlaps_detected': self.stats['overlaps_detected'],
-            'truncations': self.stats['truncations']
-        }
-        
-        if self.stats['speed_adjustments']:
-            adjustments = self.stats['speed_adjustments']
-            summary['speed_adjustments_count'] = len(adjustments)
-            summary['avg_speed_adjustment'] = sum(adjustments) / len(adjustments)
-            summary['max_speed_adjustment'] = max(adjustments)
-            summary['min_speed_adjustment'] = min(adjustments)
-        
-        return summary
-    
-    def format_adjustment_percentage(self, speed: float) -> str:
-        """格式化速度调整为百分比
-        
-        Args:
-            speed: 速度倍数
-            
-        Returns:
-            str: 格式化的百分比字符串
-        """
-        percentage = (speed - 1) * 100
-        if percentage > 0:
-            return f"+{percentage:.1f}%"
-        else:
-            return f"{percentage:.1f}%"
+        return optimized_text

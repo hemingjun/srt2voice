@@ -16,13 +16,12 @@ logger = logging.getLogger('srt2speech.gpt_sovits_manager')
 class GPTSoVITSManager:
     """GPT-SoVITS 服务管理器"""
     
-    def __init__(self, config: dict, full_service_config: dict = None, api_version: str = 'v2'):
+    def __init__(self, config: dict, full_service_config: dict = None):
         """初始化服务管理器
         
         Args:
             config: auto_start 配置字典
             full_service_config: 完整的服务配置（包含connection、runtime等）
-            api_version: API版本 ('v1' 或 'v2')
         """
         self.config = config
         self.full_service_config = full_service_config or {}
@@ -30,7 +29,6 @@ class GPTSoVITSManager:
         self.gpt_sovits_path = Path(config.get('gpt_sovits_path', ''))
         self.startup_timeout = config.get('startup_timeout', 30)
         self.use_command_script = config.get('use_command_script', True)
-        self.api_version = api_version
         self.api_url = None  # 将在启动时设置
         
         # 获取连接配置
@@ -82,9 +80,9 @@ class GPTSoVITSManager:
     def _start_with_command_script(self) -> bool:
         """使用 go-api.command 脚本启动服务"""
         # 对于v2版本，没有专门的脚本，直接使用Python启动
-        if self.api_version == "v2":
-            logger.info("API v2 没有专用启动脚本，使用 Python 直接启动")
-            return self._start_with_python()
+        # 只支持v2版本
+        logger.info("API v2 没有专用启动脚本，使用 Python 直接启动")
+        return self._start_with_python()
             
         script_path = self.gpt_sovits_path / "go-api.command"
         
@@ -115,7 +113,7 @@ class GPTSoVITSManager:
     def _start_with_python(self) -> bool:
         """直接使用 Python 启动服务"""
         try:
-            logger.info(f"使用 Python 直接启动 GPT-SoVITS (API {self.api_version})")
+            logger.info("使用 Python 直接启动 GPT-SoVITS API v2")
             
             # 构建启动命令
             python_path = self.runtime_config.get('python_path', 'runtime/bin/python3')
@@ -128,7 +126,7 @@ class GPTSoVITSManager:
             # 根据API版本选择正确的脚本
             api_script_v1 = self.runtime_config.get('api_script_v1', 'api.py')
             api_script_v2 = self.runtime_config.get('api_script_v2', 'api_v2.py')
-            api_script = api_script_v2 if self.api_version == "v2" else api_script_v1
+            api_script = api_script_v2
             
             # 从连接配置获取host和port
             host = self.connection_config.get('host', '127.0.0.1')
@@ -142,9 +140,9 @@ class GPTSoVITSManager:
             ]
             
             # 如果是v2版本，添加配置文件参数
-            if self.api_version == "v2":
-                config_file = self.runtime_config.get('config_file', 'GPT_SoVITS/configs/tts_infer.yaml')
-                cmd.extend(["-c", config_file])
+            # 只支持v2版本
+            config_file = self.runtime_config.get('config_file', 'GPT_SoVITS/configs/tts_infer.yaml')
+            cmd.extend(["-c", config_file])
             
             # 启动进程（将输出重定向到空设备，避免阻塞）
             logger.info(f"🚀 正在启动 GPT-SoVITS API 服务 ({api_script})...")
@@ -183,7 +181,7 @@ class GPTSoVITSManager:
             if self.is_service_running(self.api_url):
                 console.print(f"[green]✅ GPT-SoVITS API 服务已启动成功！[/green]")
                 console.print(f"[green]   📍 服务地址：{self.api_url}[/green]")
-                console.print(f"[green]   🔖 API版本：{self.api_version}[/green]")
+                console.print("[green]   🔖 API版本：v2[/green]")
                 return True
             
             check_count += 1

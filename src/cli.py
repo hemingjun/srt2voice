@@ -10,6 +10,8 @@ from .utils.logger import setup_logger
 from .utils.session import create_session, get_current_session
 from .tts import TTS_SERVICES
 from .audio import AudioProcessor
+from .audio.exceptions import AudioTooLongError
+from .audio.processor import ProcessingStatistics
 from .cache.manager import init_cache
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeRemainingColumn
 
@@ -31,12 +33,8 @@ console = Console()
               help='Enable debug mode with verbose logging')
 @click.option('--list-services', is_flag=True,
               help='List available TTS services and exit')
-@click.option('--emotion', default=None,
-              help='Default emotion for all subtitles (neutral, emphasis, friendly, professional)')
-@click.option('--emotion-file', 'emotion_file_path',
-              help='Path to emotion sequence file (YAML format)')
 @click.version_option(version='0.1.0', prog_name='srt2speech')
-def main(input_file, output_file, config_path, service_name, preview, debug, list_services, emotion, emotion_file_path):
+def main(input_file, output_file, config_path, service_name, preview, debug, list_services):
     """Convert SRT subtitle files to speech audio using TTS services.
     
     Example:
@@ -233,7 +231,48 @@ def process_srt(entries, output_path, config_manager, service_name, logger):
         config=config_manager.config.audio_processing
     )
     
-    # Process each subtitle with progress bar
+    # Convert entries to the format expected by process_subtitles
+    subtitles = []
+    for entry in entries:
+        subtitles.append({
+            'index': entry.index,
+            'start': entry.start_time,
+            'end': entry.end_time,
+            'content': entry.content
+        })
+    
+    # Create a wrapper for TTS service that shows progress
+    class ProgressTTSWrapper:
+        def __init__(self, tts_service, progress_callback):
+            self.tts_service = tts_service
+            self.progress_callback = progress_callback
+            # Copy all attributes from the wrapped service
+            for attr in dir(tts_service):
+                if not attr.startswith('_') and attr not in ['text_to_speech', 'text_to_speech_with_cache']:
+                    setattr(self, attr, getattr(tts_service, attr))
+            
+            # Also copy _first_segment_path for GPT-SoVITS
+            if hasattr(tts_service, '_first_segment_path'):
+                self._first_segment_path = tts_service._first_segment_path
+        
+        def text_to_speech(self, text, save_as_reference=False, speed_factor=None):
+            # Call the original method
+            if hasattr(self.tts_service, '_first_segment_path'):
+                # GPT-SoVITS service - doesn't support speed_factor in text_to_speech
+                result = self.tts_service.text_to_speech(text, save_as_reference)
+            else:
+                # Other services
+                result = self.tts_service.text_to_speech(text)
+            # Update progress
+            self.progress_callback(text)
+            return result
+        
+        def text_to_speech_with_cache(self, text):
+            result = self.tts_service.text_to_speech_with_cache(text)
+            self.progress_callback(text)
+            return result
+    
+    # Process all subtitles with the new method
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -243,74 +282,53 @@ def process_srt(entries, output_path, config_manager, service_name, logger):
         console=console
     ) as progress:
         task = progress.add_task("Converting subtitles to speech...", total=len(entries))
+        processed_count = [0]  # Use list to allow modification in closure
         
-        for i, entry in enumerate(entries):
-            try:
-                # Generate audio for this subtitle (with cache support)
-                audio = tts_service.text_to_speech_with_cache(entry.content)
-                
-                # Calculate timing for overlap detection
-                start_time = entry.start_time.total_seconds()
-                end_time = entry.end_time.total_seconds()
-                next_start_time = None
-                
-                if i < len(entries) - 1:
-                    next_start_time = entries[i + 1].start_time.total_seconds()
-                
-                # Add to processor with timing info for overlap detection
-                audio_processor.add_audio_segment(
-                    start_time,
-                    audio,
-                    end_time=end_time,
-                    next_start_time=next_start_time
-                )
-                
-                progress.update(task, advance=1, description=f"Processing: {entry.content[:30]}...")
-                
-            except Exception as e:
-                logger.error(f"Error processing subtitle {entry.index}: {str(e)}")
-                console.print(f"[red]Error:[/red] Failed to process subtitle {entry.index}")
-                continue
+        def update_progress(text):
+            processed_count[0] += 1
+            progress.update(task, advance=1, description=f"Processing: {text[:30]}...")
+        
+        # Wrap TTS service with progress tracking
+        wrapped_service = ProgressTTSWrapper(tts_service, update_progress)
+        
+        # Process with new method with fallback support
+        final_audio = process_subtitles_with_fallback(
+            audio_processor, 
+            subtitles, 
+            wrapped_service, 
+            config_manager, 
+            logger,
+            update_progress
+        )
     
-    # Generate and save final audio
+    # Save final audio
     console.print("\n[cyan]Generating final audio...[/cyan]")
     try:
-        final_audio = audio_processor._concatenate_audio()
         audio_processor.save_audio(final_audio, output_path)
         console.print(f"\n[green]✓ Success![/green] Audio saved to: {output_path}")
         
-        # Display overlap statistics if any overlaps were detected
-        overlap_stats = audio_processor.get_overlap_statistics()
-        if overlap_stats['total_overlaps'] > 0:
-            console.print("\n[yellow]⚠️  Audio Overlap Statistics:[/yellow]")
-            console.print(f"  • Total overlaps detected: {overlap_stats['total_overlaps']}")
+        # Display processing statistics
+        processing_stats = audio_processor.get_processing_statistics()
+        if processing_stats['split_segments'] > 0 or processing_stats['speed_adjusted'] > 0 or processing_stats.get('over_duration', 0) > 0:
+            console.print("\n[yellow]⚠️  Audio Processing Statistics:[/yellow]")
+            console.print(f"  • Total segments: {processing_stats['total_segments']}")
             
-            if overlap_stats['speed_adjusted'] > 0:
-                console.print(f"  • Speed adjusted: {overlap_stats['speed_adjusted']} (max speed: {overlap_stats['max_speed_factor']}x)")
+            if processing_stats.get('text_optimized', 0) > 0:
+                console.print(f"  • Text optimized: {processing_stats['text_optimized']} segments")
+                console.print(f"  • Max optimization level: {processing_stats['max_optimization_level']}")
             
-            if overlap_stats['truncated'] > 0:
-                console.print(f"  • Truncated with fade: {overlap_stats['truncated']}")
-            
-            if overlap_stats['warned_only'] > 0:
-                console.print(f"  • Warned only (no adjustment): {overlap_stats['warned_only']}")
-            
-            if overlap_stats['total_time_adjusted'] > 0:
-                console.print(f"  • Total time adjusted: {overlap_stats['total_time_adjusted']:.1f} seconds")
-            
-            # Show current handling strategy
-            overlap_handling = config_manager.config.audio_processing.get('overlap_handling', 'speed_adjust')
-            console.print(f"\n  Current strategy: [cyan]{overlap_handling}[/cyan]")
-            console.print("  (Change in config/default.yaml → audio_processing.overlap_handling)")
+            if processing_stats.get('over_duration', 0) > 0:
+                console.print(f"  • Slightly over duration: {processing_stats['over_duration']} (preserved complete audio)")
             
         # Update session statistics
         session = get_current_session()
         if session:
             session.update_stats('processed_subtitles', len(entries))
-            session.update_stats('audio_adjustments', overlap_stats['total_overlaps'])
-            if overlap_stats['speed_adjusted'] > 0:
-                session.update_stats('speed_adjustments', overlap_stats['max_speed_factor'])
+            session.update_stats('text_optimizations', processing_stats.get('text_optimized', 0))
+            if processing_stats.get('text_optimized', 0) > 0:
+                session.update_stats('max_optimization_level', processing_stats['max_optimization_level'])
             
-        return overlap_stats
+        return processing_stats
             
     except Exception as e:
         console.print(f"[red]Error saving audio:[/red] {str(e)}")
@@ -352,6 +370,95 @@ def get_tts_service_with_fallback(config_manager, preferred_service, logger):
             return service, service_name
     
     return None, None
+
+
+def get_enabled_services(config_manager):
+    """Get all enabled TTS services sorted by priority.
+    
+    Returns:
+        List of service info dicts with 'name' and 'priority'
+    """
+    services = []
+    for service_name, service_config in config_manager.config.services.items():
+        if hasattr(service_config, 'enabled') and service_config.enabled:
+            services.append({
+                'name': service_name,
+                'priority': getattr(service_config, 'priority', 999)
+            })
+    
+    # Sort by priority (lower number = higher priority)
+    return sorted(services, key=lambda x: x['priority'])
+
+
+def process_subtitles_with_fallback(audio_processor, subtitles, tts_service, config_manager, logger, progress_callback):
+    """Process subtitles with automatic service fallback on audio length errors.
+    
+    Args:
+        audio_processor: Audio processor instance
+        subtitles: List of subtitle dictionaries
+        tts_service: Current TTS service (wrapped with progress)
+        config_manager: Configuration manager for getting fallback services
+        logger: Logger instance
+        progress_callback: Progress update callback function
+        
+    Returns:
+        AudioSegment: Final processed audio
+    """
+    current_service = tts_service
+    failed_services = set()
+    
+    # Get the original service name (before wrapping)
+    original_service_name = getattr(tts_service.tts_service, 'name', 'unknown')
+    
+    while True:
+        try:
+            # Attempt to process subtitles with current service
+            return audio_processor.process_subtitles(subtitles, current_service)
+            
+        except AudioTooLongError as e:
+            # Mark this service as failed
+            failed_services.add(original_service_name)
+            
+            logger.warning(
+                f"Service '{original_service_name}' failed due to audio length issue: "
+                f"{e.actual_duration:.2f}s vs {e.target_duration:.2f}s (ratio: {e.duration_ratio:.2f}x)"
+            )
+            console.print(
+                f"\n[yellow]⚠️  Audio too long with '{original_service_name}' service[/yellow]\n"
+                f"[yellow]   Attempting fallback to next available service...[/yellow]"
+            )
+            
+            # Get all enabled services sorted by priority
+            enabled_services = get_enabled_services(config_manager)
+            
+            # Find next available service
+            next_service = None
+            for service_info in enabled_services:
+                service_name = service_info['name']
+                if service_name not in failed_services:
+                    logger.info(f"Attempting to use fallback service: {service_name}")
+                    new_service = try_initialize_service(service_name, config_manager, logger)
+                    if new_service:
+                        next_service = new_service
+                        original_service_name = service_name
+                        break
+            
+            if not next_service:
+                # No more services available
+                logger.error("No more TTS services available for fallback")
+                console.print("[red]✗ Error:[/red] All TTS services failed. Unable to process audio.")
+                raise RuntimeError(
+                    f"Audio generation failed: All services exhausted. "
+                    f"Last error - Audio too long: {e.actual_duration:.2f}s vs {e.target_duration:.2f}s"
+                )
+            
+            # Wrap the new service with progress tracking
+            current_service = ProgressTTSWrapper(next_service, progress_callback)
+            console.print(f"[green]✓ Switched to '{original_service_name}' service[/green]")
+            
+            # Reset audio processor to start fresh with new service
+            audio_processor.audio_segments.clear()
+            audio_processor.processing_stats = ProcessingStatistics()
 
 
 def try_initialize_service(service_name, config_manager, logger):

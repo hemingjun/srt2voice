@@ -30,7 +30,6 @@ class GeminiTTSService(TTSService):
         self.api_key = config['credentials'].get('api_key') or os.getenv('GEMINI_API_KEY')
         self.model_name = config['voice_settings'].get('model', 'gemini-2.5-pro-preview-tts')
         self.voice_name = config['voice_settings'].get('voice_name', 'Kore')
-        self.original_voice_name = self.voice_name  # 保存原始声音设置
         
         # 初始化客户端
         self.client = None
@@ -61,21 +60,20 @@ class GeminiTTSService(TTSService):
                 f"模型 {self.model_name} 可能不支持TTS，推荐使用：{valid_models}"
             )
     
-    def text_to_speech(self, text: str, emotion: Optional[str] = None) -> AudioSegment:
+    def text_to_speech(self, text: str) -> AudioSegment:
         """将文本转换为语音
         
         Args:
             text: 要转换的文本
-            emotion: 可选的情感参数
             
         Returns:
             AudioSegment: 音频片段
         """
-        # 如果指定了情感，应用对应的声音
-        if emotion:
-            self._apply_emotion(emotion)
         
         try:
+            # 添加调试日志确保使用一致的声音
+            logger.debug(f"使用声音: {self.voice_name}")
+            
             # 构建生成配置
             config = types.GenerateContentConfig(
                 # 设置响应类型为音频
@@ -158,10 +156,6 @@ class GeminiTTSService(TTSService):
         except Exception as e:
             logger.error(f"Gemini TTS调用失败：{str(e)}")
             raise
-        finally:
-            # 恢复原始声音设置（如果应用了情感）
-            if emotion:
-                self._restore_voice_name()
     
     def check_health(self) -> bool:
         """检查服务健康状态
@@ -197,20 +191,3 @@ class GeminiTTSService(TTSService):
             logger.warning(f"Gemini服务健康检查失败：{str(e)}")
             return False
     
-    def _apply_emotion(self, emotion: str) -> None:
-        """应用情感对应的声音
-        
-        Args:
-            emotion: 情感类型
-        """
-        from ..emotion.presets import GEMINI_VOICE_EMOTIONS
-        
-        if emotion in GEMINI_VOICE_EMOTIONS:
-            self.voice_name = GEMINI_VOICE_EMOTIONS[emotion]['voice_name']
-            logger.debug(f"应用情感 '{emotion}'，使用声音: {self.voice_name}")
-        else:
-            logger.warning(f"未知的情感类型: {emotion}")
-    
-    def _restore_voice_name(self) -> None:
-        """恢复原始声音设置"""
-        self.voice_name = self.original_voice_name

@@ -322,7 +322,5 @@ class AudioProcessor:
             'total_segments': self.processing_stats.total_segments,
             'text_optimized': self.processing_stats.text_optimized,
             'over_duration': self.processing_stats.over_duration,
-            'max_optimization_level': self.processing_stats.max_optimization_level,
-            'split_segments': 0,  # 已移除此功能
-            'speed_adjusted': 0   # 已移除此功能
+            'max_optimization_level': self.processing_stats.max_optimization_level
         }

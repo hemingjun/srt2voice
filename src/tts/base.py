@@ -26,12 +26,11 @@ class TTSService(ABC):
         pass
     
     @abstractmethod
-    def text_to_speech(self, text: str, emotion: Optional[str] = None) -> AudioSegment:
+    def text_to_speech(self, text: str) -> AudioSegment:
         """将文本转换为语音
         
         Args:
             text: 要转换的文本
-            emotion: 可选的情感参数
             
         Returns:
             AudioSegment: 音频片段
@@ -62,23 +61,12 @@ class TTSService(ABC):
         except Exception:
             return False
     
-    def apply_emotion_parameters(self, emotion: str, emotion_params: Dict[str, Any]) -> None:
-        """应用情感参数到服务配置
-        
-        Args:
-            emotion: 情感类型
-            emotion_params: 情感参数字典
-        """
-        # 子类可以重写此方法来实现特定的参数应用逻辑
-        if 'voice_settings' in self.config:
-            self.config['voice_settings'].update(emotion_params)
     
-    def text_to_speech_with_cache(self, text: str, emotion: Optional[str] = None) -> AudioSegment:
+    def text_to_speech_with_cache(self, text: str) -> AudioSegment:
         """带缓存的文本转语音
         
         Args:
             text: 要转换的文本
-            emotion: 可选的情感参数
             
         Returns:
             AudioSegment: 音频片段
@@ -88,15 +76,15 @@ class TTSService(ABC):
         
         # 尝试从缓存获取
         if cache:
-            cached_audio = cache.get(text, self.service_name, emotion)
+            cached_audio = cache.get(text, self.service_name)
             if cached_audio:
                 return cached_audio
         
         # 缓存未命中，生成音频
-        audio = self.text_to_speech(text, emotion)
+        audio = self.text_to_speech(text)
         
         # 存入缓存
         if cache and audio:
-            cache.put(text, audio, self.service_name, emotion)
+            cache.put(text, audio, self.service_name)
         
         return audio

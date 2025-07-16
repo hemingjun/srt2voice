@@ -10,7 +10,7 @@ services:
     
     credentials:
       api_url: "http://127.0.0.1:9880"  # GPT-SoVITS API地址
-      api_version: "v2"  # API版本：v1 或 v2（推荐v2）
+      # GPT-SoVITS只支持API v2版本
     
     # 自动启动设置（可选）
     auto_start:
@@ -23,9 +23,11 @@ services:
     connection:
       host: "127.0.0.1"  # API监听地址
       port: 9880  # API监听端口
-      timeout: 30  # 请求超时时间（秒）
+      timeout: 60  # 请求超时时间（秒）- 增加到60秒以处理长文本
       health_check_timeout: 5  # 健康检查超时时间（秒）
       max_retries: 3  # 最大重试次数
+      long_text_timeout: 120  # 长文本超时时间（秒）
+      long_text_threshold: 100  # 长文本阈值（字符数）
     
     # 重试策略（可选）
     retry_strategy:
@@ -63,52 +65,41 @@ services:
       # 提示：您可以在 config/reference_voices/ 目录下创建多个参考音频配置
       # 然后通过修改 voice_profile 来切换不同的声音
       
-      # 采样参数（可选，影响生成质量）
-      # 以下参数已优化以确保声音一致性
-      top_k: 2  # Top-K采样，范围1-20，极低值确保最大稳定性
-      top_p: 0.5  # Top-P采样，范围0-1，中低值减少变化
-      temperature: 0.2  # 温度参数，范围0-2，极低温度确保声音一致
-      
-      # 生成控制（可选）
+      # 语速控制（可选）
       speed_factor: 1.0  # 语速，范围0.5-2.0
-      text_split_method: "cut5"  # 文本分割方法：cut0-cut5
-      batch_size: 1  # 批处理大小
-      batch_threshold: 0.75  # 批处理阈值
-      split_bucket: true  # 是否分桶处理
-      
-      # 音频设置（可选）
-      media_type: "wav"  # 输出格式：wav、ogg、aac
-      streaming_mode: false  # 是否流式返回
-      fragment_interval: 0.3  # 片段间隔（秒）
-      
-      # 高级参数（可选）
-      seed: 2024  # 随机种子，固定值确保声音一致性（使用固定种子非常重要）
-      parallel_infer: true  # 并行推理
-      repetition_penalty: 1.2  # 重复惩罚，稍微降低增加自然度
-      
-      # V3版本专用参数（可选）
-      sample_steps: 32  # 采样步数（仅V3版本）
-      super_sampling: false  # 超采样（仅V3版本）
 
   # Google Gemini TTS服务
   gemini:
     service_name: gemini
     priority: 2  # 第二优先级（作为GPT-SoVITS的备选）
-    enabled: true  # 启用Gemini服务（需要设置GEMINI_API_KEY环境变量）
+    enabled: true  # 启用Gemini服务
     
     credentials:
-      api_key: ""  # 可通过环境变量 GEMINI_API_KEY 设置
+      api_key: "AIzaSyDEIjGMiE2hVQZIEpr7qm5W7nmW5eT0puI"  # 请设置您的API密钥或使用 GEMINI_API_KEY 环境变量
     
     voice_settings:
       # 模型选择
-      model: "gemini-2.5-pro-preview-tts"  # 高质量TTS模型
+      # - gemini-2.5-flash-preview-tts: 快速模型，适合实时应用
+      # - gemini-2.5-pro-preview-tts: 专业模型，更高质量
+      model: "gemini-2.5-pro-preview-tts"
       
-      # 声音选择（30种可选）
-      voice_name: "Kore"  # 默认声音，适合中文
-      # 其他可选声音：Puck, Charon, Fenrir, Aoede, Vale, Journey 等
+      # 声音选择（Gemini支持的声音）
+      # 常用女声：kore（柔和）, aoede（清晰）, callirrhoe, leda
+      # 常用男声：puck（友好）, charon（稳重）, fenrir（深沉）, orus
+      # 其他声音：achernar, achird, algenib, algieba, alnilam, autonoe, 
+      #         despina, enceladus, erinome, gacrux, iapetus, laomedeia,
+      #         pulcherrima, rasalgethi, sadachbia, sadaltager, schedar,
+      #         sulafat, umbriel, vindemiatrix, zephyr, zubenelgenubi
+      voice_name: "aoede"  # 使用aoede，清晰的女声
       
       # 语言设置
       language: "auto"  # 自动检测语言（适合中英文混合）
+      
+      # 音频参数（Gemini默认值）
+      # 注意：这些参数由Gemini API控制，不可自定义
+      # sample_rate: 24000  # 原始采样率24kHz
+      # bit_depth: 16       # 16位深度
+      # channels: 1         # 单声道
 
   # Azure Speech Services（预留）
   azure:
@@ -139,11 +130,16 @@ audio_processing:
   normalize: true
   remove_silence: false
   crossfade_duration: 0.01
-  # 音频重叠处理策略
-  overlap_handling: 'speed_adjust'  # 可选：'speed_adjust'（调速）、'truncate'（截断）、'warn_only'（仅警告）
-  speed_adjust_limit: 2.0  # GPT-SoVITS 最大语速调整倍数
-  max_total_speed: 4.0  # 总体最大加速倍数（GPT-SoVITS + 后处理）
-  fade_duration: 0.05  # 截断时的淡出时长（秒）
+  
+  # 时长控制设置
+  # 当音频超过目标时长的1.5倍时，会自动优化标点符号来缩短音频
+  
+  # 智能分句参数
+  timing:
+    min_segment_chars: 10        # 最小分段字符数
+    max_segment_chars: 30        # 最大分段字符数
+    prefer_complete_sentences: true  # 优先保持完整句子
+    min_segment_duration: 0.5    # 最小片段时长（秒）
 
 # 缓存设置
 cache:
