@@ -16,7 +16,7 @@ services:
     # 自动启动设置
     auto_start:
       enabled: true
-      gpt_sovits_path: "/Users/mingjun/Documents/Git Project/GPT-SoVITS"
+      gpt_sovits_path: "/Users/mingjun/Documents/GitHub/GPT-SoVITS"
       startup_timeout: 30
       use_command_script: false
     
